@@ -5,5 +5,11 @@
     "api/[...path].js": {
       "includeFiles": "server/db/schema.sql"
     }
-  }
+  },
+  "rewrites": [
+    {
+      "source": "/api/:first/:requestPath*",
+      "destination": "/api/[...path]?__mesalista_path=/api/:first/:requestPath*"
+    }
+  ]
 }

@@ -204,7 +204,7 @@ Las tarifas de ejemplo en `.env.example` son **10.00 USD por mesa y 5.00 USD por
 
 ## 9. Publicar en Vercel
 
-El repositorio incluye `vercel.json` y una función Node.js que adapta Express a Vercel Functions. Vercel compila React/Vite como sitio estático y sirve `/api/*` desde la misma URL; no se necesita un servidor Express permanente.
+El repositorio incluye `vercel.json` y una función Node.js que adapta Express a Vercel Functions. Vercel compila React/Vite como sitio estático y sirve `/api/*` desde la misma URL; las rutas API anidadas se reescriben a la función común conservando la ruta original para Express. No se necesita un servidor Express permanente.
 
 1. Sube el proyecto a un repositorio Git privado o público e impórtalo en Vercel. Vercel detecta el proyecto; los comandos configurados son `npm run build` y el directorio de salida `dist`.
 2. En **Project → Settings → Environment Variables**, define para Production (y Preview si la usarás):

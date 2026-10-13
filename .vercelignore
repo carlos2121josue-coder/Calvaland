@@ -1,0 +1,4 @@
+MesaLista.zip
+.env
+.env.*
+!.env.example
