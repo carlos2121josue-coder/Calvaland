@@ -12,6 +12,9 @@ const api = async (path, token, options = {}) => {
     },
   });
   const data = await response.json().catch(() => ({}));
+  if (response.status === 401 && token) {
+    window.dispatchEvent(new Event('mesalista:session-expired'));
+  }
   if (!response.ok) throw new Error(data.error || 'No se pudo completar la operación.');
   return data;
 };
@@ -41,7 +44,7 @@ const statusNames = {
   unpaid: 'Pago pendiente',
 };
 
-function AuthScreen({ onLogin, theme, onToggleTheme, onGuestReservation }) {
+function AuthScreen({ onLogin, theme, onToggleTheme, onGuestReservation, sessionExpired }) {
   const [register, setRegister] = useState(false);
   const [form, setForm] = useState({ name: '', email: '', password: '' });
   const [error, setError] = useState('');
@@ -70,6 +73,7 @@ function AuthScreen({ onLogin, theme, onToggleTheme, onGuestReservation }) {
           <h1>{register ? 'Crea tu cuenta' : 'Todo listo para tu próximo evento.'}</h1>
           <p>Reserva mesas y sillas, y mantén cada movimiento bajo control.</p>
         </div>
+        {sessionExpired && <p className="form-error" role="alert">Tu sesión anterior expiró o dejó de ser válida. Inicia sesión de nuevo.</p>}
         <form onSubmit={submit} className="stack-form">
           {register && <label>Nombre completo<input required minLength="2" autoComplete="name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label>}
           <label>Correo electrónico<input required type="email" autoComplete="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></label>
@@ -270,6 +274,7 @@ function App() {
   const [demoReservation, setDemoReservation] = useState(null);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
+  const [sessionExpired, setSessionExpired] = useState(false);
   const [busy, setBusy] = useState(false);
   const isAdmin = session?.user?.role === 'admin';
 
@@ -307,6 +312,24 @@ function App() {
   }, [session, refresh, refreshAdmin]);
 
   useEffect(() => {
+    const handleExpiredSession = () => {
+      localStorage.removeItem('mesalista-session');
+      setSession(null);
+      setDashboard(null);
+      setReservations([]);
+      setLoans([]);
+      setMovements([]);
+      setUsers([]);
+      setDemoReservation(null);
+      setSessionExpired(true);
+      setError('');
+      setNotice('');
+    };
+    window.addEventListener('mesalista:session-expired', handleExpiredSession);
+    return () => window.removeEventListener('mesalista:session-expired', handleExpiredSession);
+  }, []);
+
+  useEffect(() => {
     if (!session?.token) return undefined;
     let updating = false;
     const sync = () => {
@@ -332,6 +355,7 @@ function App() {
 
   const login = (value) => {
     localStorage.setItem('mesalista-session', JSON.stringify(value));
+    setSessionExpired(false);
     setSession(value);
   };
   const logout = () => {
@@ -369,6 +393,7 @@ function App() {
     theme={theme}
     onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
     onGuestReservation={() => setGuestMode(true)}
+    sessionExpired={sessionExpired}
   />;
   const nav = [
     { id: 'inicio', label: 'Resumen', icon: '⌂' },
