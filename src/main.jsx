@@ -44,6 +44,34 @@ const statusNames = {
   unpaid: 'Pago pendiente',
 };
 
+function inventoryIsEmpty(inventory) {
+  if (!Array.isArray(inventory)) return false;
+  const items = Object.fromEntries(inventory.map((item) => [item.resource, item]));
+  return ['tables', 'chairs'].every((resource) => Number(items[resource]?.available) <= 0
+    && items[resource]?.available !== undefined);
+}
+
+function InventoryUnavailableNotice({ inventory }) {
+  if (!inventoryIsEmpty(inventory)) return null;
+  return <div className="inventory-unavailable" role="alert">
+    <strong>Actualmente no hay mesas ni sillas disponibles.</strong>
+    <span>Espera a que el dueño agregue más.</span>
+  </div>;
+}
+
+function QuantityControl({ label, value, max, onChange }) {
+  const update = (amount) => onChange(Math.min(max, Math.max(0, Number(value) + amount)));
+  const setFromInput = (event) => {
+    const next = Number(event.target.value);
+    onChange(Math.min(max, Math.max(0, Number.isFinite(next) ? next : 0)));
+  };
+  return <div className="quantity-control">
+    <button type="button" aria-label={`Bajar cantidad de ${label.toLowerCase()}`} disabled={value <= 0} onClick={() => update(-1)}>↓</button>
+    <input aria-label={`Cantidad de ${label.toLowerCase()}`} type="number" inputMode="numeric" min="0" max={max} step="1" value={value} onChange={setFromInput} />
+    <button type="button" aria-label={`Subir cantidad de ${label.toLowerCase()}`} disabled={value >= max} onClick={() => update(1)}>↑</button>
+  </div>;
+}
+
 function AuthScreen({ onLogin, theme, onToggleTheme, onGuestReservation, sessionExpired }) {
   const [register, setRegister] = useState(false);
   const [form, setForm] = useState({ name: '', email: '', password: '' });
@@ -222,9 +250,10 @@ function GuestReservationPage({ theme, onToggleTheme, onBack }) {
           <label className={`payment-choice-card ${paymentMethod === 'cash' ? 'selected' : ''}`}><input type="radio" name="guest-payment-method" value="cash" checked={paymentMethod === 'cash'} onChange={() => setPaymentMethod('cash')} /><span className="payment-choice-icon cash-icon">$</span><span><strong>Efectivo</strong><small>Administración confirma el pago</small></span><span className="choice-indicator" /></label>
         </fieldset>
         <div className="guest-stock">
+          <InventoryUnavailableNotice inventory={availability} />
           {[['tables', 'Mesas', tables, setTables, 'mint'], ['chairs', 'Sillas', chairs, setChairs, 'lavender']].map(([resource, label, count, setCount, tone]) => <div className="quantity-row" key={resource}>
             <div><span className={`quantity-symbol ${tone}`}>{resource === 'tables' ? '▤' : '▥'}</span><span><strong>{label}</strong><small>{items[resource]?.available ?? 0} disponibles</small></span></div>
-            <div className="quantity-control"><button type="button" aria-label={`Quitar ${label.toLowerCase()}`} onClick={() => setCount(Math.max(0, Number(count) - 1))}>−</button><input aria-label={`Cantidad de ${label.toLowerCase()}`} type="number" min="0" max={items[resource]?.available ?? 0} value={count} onChange={(event) => setCount(Math.min(items[resource]?.available ?? 0, Math.max(0, Number(event.target.value))))} /><button type="button" aria-label={`Agregar ${label.toLowerCase()}`} onClick={() => setCount(Math.min(items[resource]?.available ?? 0, Number(count) + 1))}>＋</button></div>
+            <QuantityControl label={label} value={count} max={items[resource]?.available ?? 0} onChange={setCount} />
           </div>)}
         </div>
         {total > 0 && <div className="price-row"><span>Estimado por el día</span><strong>{money(total, rates.currency)}</strong></div>}
@@ -418,6 +447,7 @@ function App() {
           <div className="top-actions"><span className="today-label">{new Date().toLocaleDateString('es', { weekday: 'short', day: 'numeric', month: 'short' })}</span><button className="icon-button" aria-label="Actualizar" onClick={() => refresh().catch((err) => setError(err.message))}>⟳</button><ThemeToggle theme={theme} onToggle={() => setTheme(theme === 'dark' ? 'light' : 'dark')} /><span className="avatar small">{session.user.name.slice(0, 1).toUpperCase()}</span></div>
         </header>
         <div className="content">
+          <InventoryUnavailableNotice inventory={dashboard?.inventory} />
           {error && <div className="toast error-toast" role="alert">{error}<button onClick={() => setError('')}>×</button></div>}
           {notice && <div className="toast success-toast" role="status">{notice}<button onClick={() => setNotice('')}>×</button></div>}
           {page === 'inicio' && <Dashboard dashboard={dashboard} isAdmin={isAdmin} reservations={reservations} loans={loans} onGo={setPage} onRun={run} token={session.token} />}
@@ -571,9 +601,10 @@ function Reservations({ dashboard, reservations, users, currentUser, busy, onRun
         <div className="form-two"><label>Hora de inicio <span className="optional">opcional</span><input type="time" value={start} onChange={(e) => setStart(e.target.value)} /></label><label>Hora de finalización <span className="optional">opcional</span><input type="time" value={end} onChange={(e) => setEnd(e.target.value)} /></label></div>
         {invalidHours && <p className="form-error">Completa ambas horas y asegúrate de que la finalización sea posterior al inicio.</p>}
         {availabilityError && <p className="form-error" role="alert">{availabilityError}</p>}
+        <InventoryUnavailableNotice inventory={availability} />
         <div className="form-divider" />
-        <div className="quantity-row"><div><span className="quantity-symbol mint">▤</span><span><strong>Mesas</strong><small>{items.tables?.available ?? 0} disponibles</small></span></div><div className="quantity-control"><button type="button" aria-label="Quitar mesa" onClick={() => setTables(Math.max(0, Number(tables) - 1))}>−</button><input aria-label="Cantidad de mesas" type="number" min="0" max={items.tables?.available ?? 0} value={tables} onChange={(e) => setTables(Math.min(items.tables?.available ?? 0, Math.max(0, Number(e.target.value))))} /><button type="button" aria-label="Agregar mesa" onClick={() => setTables(Math.min(items.tables?.available ?? 0, Number(tables) + 1))}>＋</button></div></div>
-        <div className="quantity-row"><div><span className="quantity-symbol lavender">▥</span><span><strong>Sillas</strong><small>{items.chairs?.available ?? 0} disponibles</small></span></div><div className="quantity-control"><button type="button" aria-label="Quitar silla" onClick={() => setChairs(Math.max(0, Number(chairs) - 1))}>−</button><input aria-label="Cantidad de sillas" type="number" min="0" max={items.chairs?.available ?? 0} value={chairs} onChange={(e) => setChairs(Math.min(items.chairs?.available ?? 0, Math.max(0, Number(e.target.value))))} /><button type="button" aria-label="Agregar silla" onClick={() => setChairs(Math.min(items.chairs?.available ?? 0, Number(chairs) + 1))}>＋</button></div></div>
+        <div className="quantity-row"><div><span className="quantity-symbol mint">▤</span><span><strong>Mesas</strong><small>{items.tables?.available ?? 0} disponibles</small></span></div><QuantityControl label="Mesas" value={tables} max={items.tables?.available ?? 0} onChange={setTables} /></div>
+        <div className="quantity-row"><div><span className="quantity-symbol lavender">▥</span><span><strong>Sillas</strong><small>{items.chairs?.available ?? 0} disponibles</small></span></div><QuantityControl label="Sillas" value={chairs} max={items.chairs?.available ?? 0} onChange={setChairs} /></div>
         <fieldset className="payment-choice"><legend>Forma de pago</legend>
           <label className={`payment-choice-card ${paymentMethod === 'demo' ? 'selected' : ''}`}><input type="radio" name="account-payment-method" value="demo" checked={paymentMethod === 'demo'} onChange={() => setPaymentMethod('demo')} /><span className="payment-choice-icon">P</span><span><strong>Pago de prueba</strong><small>No es PayPal ni cobra dinero real</small></span><span className="choice-indicator" /></label>
           <label className={`payment-choice-card ${paymentMethod === 'cash' ? 'selected' : ''}`}><input type="radio" name="account-payment-method" value="cash" checked={paymentMethod === 'cash'} onChange={() => setPaymentMethod('cash')} /><span className="payment-choice-icon cash-icon">$</span><span><strong>Efectivo</strong><small>Se confirma al recibirlo</small></span><span className="choice-indicator" /></label>
