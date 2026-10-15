@@ -94,7 +94,7 @@ erDiagram
   }
 ```
 
-El esquema SQL completo y los inventarios iniciales (100 mesas y 100 sillas) están en [`server/db/schema.sql`](./server/db/schema.sql). Al conectarlo a una base ya inicializada, el `ON CONFLICT DO NOTHING` conserva las cantidades existentes; los cambios al inventario deben hacerse desde la administración para que queden registrados en el historial.
+El esquema SQL completo y los inventarios iniciales (120 mesas y 120 sillas) están en [`server/db/schema.sql`](./server/db/schema.sql). Al conectarlo a una base ya inicializada, el `ON CONFLICT DO NOTHING` conserva las cantidades existentes; los cambios al inventario deben hacerse desde la administración para que queden registrados en el historial.
 
 ## 3. Flujos principales
 

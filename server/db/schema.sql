@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS inventory (
 );
 
 INSERT INTO inventory (resource, total)
-VALUES ('tables', 100), ('chairs', 100)
+VALUES ('tables', 120), ('chairs', 120)
 ON CONFLICT (resource) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS reservations (
