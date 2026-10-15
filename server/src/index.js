@@ -768,7 +768,10 @@ app.get('/api/loans', async (req, res) => {
             GREATEST(l.chairs - l.chairs_returned, 0) AS chairs_pending,
             CASE WHEN l.status IN ('active', 'partially_returned') AND l.due_date < CURRENT_DATE THEN 'overdue' ELSE l.status END AS effective_status
      FROM loans l LEFT JOIN users u ON u.id = l.user_id
-     ${admin ? '' : 'WHERE l.user_id = $1'}
+     ${admin ? '' : `WHERE l.user_id = $1
+       OR (l.user_id IS NULL AND LOWER(l.borrower_email) = (
+         SELECT LOWER(email) FROM users WHERE id = $1
+       ))`}
      ORDER BY l.created_at DESC LIMIT 100`,
     admin ? [] : [req.auth.sub],
   );
