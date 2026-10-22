@@ -42,6 +42,9 @@ CREATE TABLE IF NOT EXISTS reservations (
   payment_method TEXT NOT NULL DEFAULT 'demo'
     CHECK (payment_method IN ('demo', 'cash')),
   total_cents INTEGER NOT NULL DEFAULT 0 CHECK (total_cents >= 0),
+  paid_at TIMESTAMPTZ,
+  reservation_email_sent_at TIMESTAMPTZ,
+  receipt_email_sent_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CHECK (tables + chairs > 0),
@@ -53,6 +56,11 @@ ALTER TABLE reservations ADD COLUMN IF NOT EXISTS contact_name TEXT;
 ALTER TABLE reservations ADD COLUMN IF NOT EXISTS contact_email TEXT;
 ALTER TABLE reservations ADD COLUMN IF NOT EXISTS guest_access_hash TEXT;
 ALTER TABLE reservations ADD COLUMN IF NOT EXISTS payment_method TEXT NOT NULL DEFAULT 'demo';
+ALTER TABLE reservations ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ;
+ALTER TABLE reservations ADD COLUMN IF NOT EXISTS reservation_email_sent_at TIMESTAMPTZ;
+ALTER TABLE reservations ADD COLUMN IF NOT EXISTS receipt_email_sent_at TIMESTAMPTZ;
+UPDATE reservations SET paid_at = updated_at
+WHERE payment_status = 'paid' AND paid_at IS NULL;
 ALTER TABLE reservations DROP CONSTRAINT IF EXISTS reservations_payment_method_check;
 ALTER TABLE reservations ADD CONSTRAINT reservations_payment_method_check
   CHECK (payment_method IN ('demo', 'cash'));

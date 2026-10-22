@@ -10,6 +10,7 @@ Aplicación web responsive para administrar mesas y sillas, sus reservas, prést
 - **Autenticación:** contraseñas con bcrypt y tokens JWT de 12 horas. El rol vigente se consulta en la base de datos, así que un cambio de permisos aplica también a sesiones existentes.
 - **Reservas sin cuenta:** cualquier persona puede enviar una solicitud con su correo sin crear usuario. Solo administración puede consultar esos registros; una clave aleatoria temporal permite completar el pago de prueba, pero no consultar ni cancelar reservas.
 - **Pagos:** permite registrar efectivo pendiente de confirmación administrativa y un simulador local `MesaLista Pay`. La simulación no cobra, no se conecta a PayPal ni solicita tarjetas.
+- **Correos de reserva y pago:** al registrar una reserva, envía sus datos y el estado del pago al correo de la cuenta seleccionada; al confirmar el pago, envía un comprobante HTML mediante la API HTTPS de Resend. Si falla el envío, la reserva o el pago quedan guardados y el mensaje se puede reintentar desde Reservas.
 - **Apariencia:** identidad visual monocromática de alto contraste con acento lima, tipografía geométrica y selector de tema claro/oscuro guardado localmente.
 
 ## 2. Entidades y relaciones
@@ -134,10 +135,11 @@ Las rutas de gestión requieren una sesión autenticada, salvo registro, inicio 
 | Resumen/disponibilidad | `GET /api/dashboard`, `GET /api/availability?date=YYYY-MM-DD&startTime=HH:mm&endTime=HH:mm` |
 | Reservas sin cuenta | `GET /api/guest/availability`, `POST /api/guest/reservations`, `POST /api/guest/reservations/:id/demo-payment` |
 | Pago de prueba sin cuenta | `POST /api/guest/payments/demo/complete`, `POST /api/guest/payments/demo/cancel` (clave temporal de pago; sin consulta ni cancelación pública) |
-| Efectivo | `POST /api/reservations/:id/cash-payment/confirm` (admin confirma la recepción y registra el movimiento) |
+| Efectivo | `POST /api/reservations/:id/cash-payment/confirm` (admin confirma la recepción, registra el movimiento y envía el comprobante) |
 | Inventario (admin) | `PATCH /api/inventory/:resource` |
 | Reservas | `GET /api/reservations`, `POST /api/reservations`, `POST /api/reservations/:id/cancel` |
 | Simulación de pago | `POST /api/reservations/:id/demo-payment`, `POST /api/payments/demo/complete`, `POST /api/payments/demo/cancel` |
+| Reenvío de correos | `POST /api/reservations/:id/reservation-email` (confirmación) y `POST /api/reservations/:id/receipt-email` (comprobante de reservas pagadas); titular o admin |
 | Préstamos | `GET /api/loans`, `POST /api/loans`, `POST /api/loans/from-reservation/:id` |
 | Devoluciones (admin) | `POST /api/loans/:id/returns` |
 | Historial/usuarios (admin) | `GET /api/movements`, `GET /api/users`, `PATCH /api/users/:id/role` |
@@ -191,14 +193,15 @@ server/
 
 3. En `.env`, define `DATABASE_URL`, un `JWT_SECRET` aleatorio de al menos 32 caracteres, y `ADMIN_NAME`, `ADMIN_EMAIL` y `ADMIN_PASSWORD` (mínimo 12 caracteres). Rota primero las contraseñas de base de datos que hayas compartido como imágenes; introduce la nueva cadena directamente en `.env`, no en el chat.
 4. El pago integrado es únicamente una simulación local. En `.env`, cambia `PAYMENT_CURRENCY` si corresponde. No cobra dinero, no se conecta a PayPal ni debe usarse en producción como comprobante real.
-5. Arranca el servidor para crear o actualizar el esquema de forma idempotente y luego, en otra terminal, crea el administrador:
+5. Para enviar correos, crea una cuenta en Resend, verifica el dominio del remitente y configura `RESEND_API_KEY` y `RECEIPT_FROM` en `.env`. No compartas la clave ni la guardes en Git.
+6. Arranca el servidor para crear o actualizar el esquema de forma idempotente y luego, en otra terminal, crea el administrador:
 
    ```bash
    npm run dev
    npm run db:admin
    ```
 
-6. Abre `http://localhost:5173`. El servidor de interfaz reenvía `/api` a Express en `http://localhost:3001`.
+7. Abre `http://localhost:5173`. El servidor de interfaz reenvía `/api` a Express en `http://localhost:3001`.
 
 Las tarifas de ejemplo en `.env.example` son **10.00 USD por mesa y 5.00 USD por silla por día**. El total se calcula a partir de las cantidades seleccionadas. El simulador sirve para verificar el flujo y las actualizaciones del inventario, pero no acepta pagos reales.
 
@@ -212,6 +215,8 @@ El repositorio incluye `vercel.json` y una función Node.js que adapta Express a
    - `JWT_SECRET`: secreto aleatorio de al menos 32 caracteres. No reutilices contraseñas ni lo publiques.
    - `WEB_ORIGIN`: origen completo del dominio de producción, por ejemplo `https://tu-dominio.vercel.app`. Se admiten varios orígenes separados por comas. Vercel permite automáticamente el dominio del deployment actual y el dominio de producción del proyecto.
    - `PRICE_TABLE_CENTS=1000`, `PRICE_CHAIR_CENTS=500` y `PAYMENT_CURRENCY=USD`.
+   - `RESEND_API_KEY`: clave privada de Resend.
+   - `RECEIPT_FROM`: remitente de un dominio verificado en Resend, por ejemplo `MesaLista <comprobantes@tudominio.com>`.
 3. Haz el primer deployment. La primera solicitud a `/api/health` crea o actualiza el esquema en Neon bajo un bloqueo transaccional; la ruta debe responder `{"status":"ok","database":"connected",...}`.
 4. Crea la cuenta administradora una sola vez desde un entorno seguro con `DATABASE_URL` apuntando a la misma base Neon. Define `ADMIN_NAME`, `ADMIN_EMAIL` y `ADMIN_PASSWORD` (mínimo 12 caracteres) en tu `.env` local y ejecuta `npm run db:admin`. No guardes el `.env` en Git ni configures esas credenciales de bootstrap como variables públicas del frontend.
 5. Prueba el inicio de sesión, una reserva y el historial en el dominio publicado. Añade el dominio personalizado en Vercel y en `WEB_ORIGIN` si corresponde; cambia las variables en Vercel y redepliega para aplicarlas.

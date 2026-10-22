@@ -106,3 +106,47 @@ body{background:#f2f2ef;color:#171717}button,input,select{font-family:'Space Gro
 [data-theme="dark"] .inventory-unavailable span{color:#ccc}
 [data-theme="dark"] .quantity-control button{background:#202020;color:#efff54;border-color:#777}
 @media(max-width:560px){.quantity-row{gap:8px}.quantity-row>div:first-child{flex:1;min-width:0}.quantity-control{gap:4px}.quantity-control button{width:44px;height:44px}.quantity-control input{width:52px;height:44px}}
+.invoice-backdrop{position:fixed;inset:0;z-index:20;background:#14201ecc;display:grid;place-items:center;padding:18px;overflow:auto}
+.invoice-document{width:min(100%,560px);max-height:calc(100vh - 36px);overflow:auto;background:#fff;color:#263538;border:1px solid #e9eef0;border-radius:14px;padding:26px 30px;box-shadow:0 24px 80px #0004}
+.invoice-actions,.invoice-heading,.invoice-meta,.invoice-reservation,.invoice-table-head,.invoice-items>div,.invoice-total,.invoice-payment,.invoice-footer{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.invoice-kicker{font-family:Manrope,sans-serif;font-size:10px;font-weight:800;letter-spacing:.9px;color:#263538}
+.invoice-kicker span{color:#328e7c}
+.invoice-close{width:34px;height:34px;border:1px solid #e5ebec;border-radius:9px;background:#fff;color:#59696a;font-size:24px;line-height:1}
+.invoice-heading{margin:25px 0 18px;padding-bottom:18px;border-bottom:1px solid #e9eef0}
+.invoice-heading h2{font-family:Manrope,sans-serif;font-size:21px;margin:5px 0 0;color:#263538}
+.invoice-check{width:42px;height:42px;display:grid;place-items:center;background:#e5f4ef;color:#328e7c;border-radius:50%;font-size:21px;font-weight:700}
+.invoice-meta{align-items:flex-start;padding:0 0 20px}
+.invoice-meta>div,.invoice-customer,.invoice-reservation>div{display:grid;gap:5px}
+.invoice-meta span,.invoice-customer>span,.invoice-reservation span,.invoice-payment>span{font-size:9px;color:#899799}
+.invoice-meta strong,.invoice-reservation strong{font-size:11px;color:#344547}
+.invoice-customer{padding:15px;background:#f6f8fb;border-radius:9px}
+.invoice-customer>span{font-size:8px;font-weight:700;letter-spacing:1px}
+.invoice-customer strong{font-size:12px}
+.invoice-customer small{font-size:10px;color:#718082}
+.invoice-reservation{justify-content:flex-start;border-bottom:1px solid #e9eef0;padding:17px 2px}
+.invoice-items{margin:16px 0 8px}
+.invoice-table-head{font-size:9px;font-weight:700;color:#899799;padding-bottom:8px;border-bottom:1px solid #e9eef0}
+.invoice-items>div:not(.invoice-table-head){font-size:11px;padding:10px 0;border-bottom:1px solid #f0f3f3}
+.invoice-items strong{font-size:11px}
+.invoice-total{padding:15px 0;border-bottom:1px solid #e9eef0;font-size:11px}
+.invoice-total strong{font-family:Manrope,sans-serif;font-size:19px;color:#287e70}
+.invoice-payment{padding:12px 0;align-items:flex-start;font-size:10px}
+.invoice-payment strong{text-align:right}
+.invoice-disclaimer{margin:8px 0 18px;padding:10px 12px;background:#f6f8fb;color:#718082;border-radius:7px;font-size:9px;line-height:1.6}
+.invoice-footer{justify-content:flex-start}
+[data-theme="dark"] .invoice-document{background:#202422;color:#edf3f0;border-color:#454c49}
+[data-theme="dark"] .invoice-kicker,[data-theme="dark"] .invoice-heading h2,[data-theme="dark"] .invoice-meta strong,[data-theme="dark"] .invoice-reservation strong,[data-theme="dark"] .invoice-customer strong,[data-theme="dark"] .invoice-items strong,[data-theme="dark"] .invoice-payment strong{color:#edf3f0}
+[data-theme="dark"] .invoice-close{background:#292f2d;color:#f0f4f2;border-color:#555d5a}
+[data-theme="dark"] .invoice-heading,[data-theme="dark"] .invoice-meta,[data-theme="dark"] .invoice-reservation,[data-theme="dark"] .invoice-table-head,[data-theme="dark"] .invoice-items>div:not(.invoice-table-head),[data-theme="dark"] .invoice-total{border-color:#454c49}
+[data-theme="dark"] .invoice-customer,[data-theme="dark"] .invoice-disclaimer{background:#292f2d}
+[data-theme="dark"] .invoice-customer small,[data-theme="dark"] .invoice-meta span,[data-theme="dark"] .invoice-customer>span,[data-theme="dark"] .invoice-reservation span,[data-theme="dark"] .invoice-payment>span,[data-theme="dark"] .invoice-disclaimer{color:#b1bfba}
+@media(max-width:560px){.invoice-document{padding:20px 17px}.invoice-heading h2{font-size:18px}.invoice-meta{gap:8px}.invoice-meta strong{font-size:10px}.invoice-footer{align-items:stretch;flex-direction:column}.invoice-footer .button{width:100%}}
+@media print{body *{visibility:hidden}.invoice-backdrop,.invoice-backdrop *{visibility:visible}.invoice-backdrop{position:absolute;inset:0;display:block;padding:0;background:#fff;overflow:visible}.invoice-document{width:100%;max-height:none;overflow:visible;margin:0;padding:20px;border:0;border-radius:0;box-shadow:none}.invoice-close,.invoice-footer{display:none}.invoice-disclaimer{color:#555}}
+.reservation-row-actions{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.invoice-email-status{margin:10px 0;padding:10px 12px;border-radius:7px;background:#fff4dc;color:#785b24;font-size:10px;line-height:1.5}
+.invoice-email-status.sent,.receipt-email-success{background:#e6f5ee;color:#24765f}
+.receipt-email-warning{background:#fff4dc;color:#785b24}
+[data-theme="dark"] .invoice-email-status{background:#4a3e24;color:#f4d68f}
+[data-theme="dark"] .invoice-email-status.sent{background:#1f463a;color:#a5e6c9}
+[data-theme="dark"] .receipt-email-success{color:#a5e6c9}
+[data-theme="dark"] .receipt-email-warning{color:#f4d68f}

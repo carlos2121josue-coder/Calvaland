@@ -85,6 +85,127 @@ async function logMovement(db, { actorId, actorEmail = null, resource = null, qu
   );
 }
 
+const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => ({
+  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+})[character]);
+
+async function sendReservationEmail(reservationId, type = 'receipt') {
+  if (!['reservation', 'receipt'].includes(type)) {
+    throw new Error(`Tipo de correo no válido: ${type}`);
+  }
+  const { rows } = await pool.query(
+    `SELECT r.*, COALESCE(r.contact_name, u.name, 'Usuario') AS customer_name,
+            COALESCE(r.contact_email, u.email) AS customer_email
+     FROM reservations r LEFT JOIN users u ON u.id = r.user_id
+     WHERE r.id = $1`,
+    [reservationId],
+  );
+  const reservation = rows[0];
+  if (!reservation) fail(404, 'No se encontró la reserva para enviar el comprobante.');
+  const sentAtColumn = type === 'receipt' ? 'receipt_email_sent_at' : 'reservation_email_sent_at';
+  if (type === 'receipt' && reservation.payment_status !== 'paid') {
+    fail(409, 'El comprobante solo se puede enviar después de confirmar el pago.');
+  }
+  if (reservation[sentAtColumn]) {
+    return { sent: true, alreadySent: true, email: reservation.customer_email, type, sentAt: reservation[sentAtColumn] };
+  }
+  if (!reservation.customer_email) {
+    return { sent: false, reason: 'La reserva no tiene un correo de destinatario.' };
+  }
+  if (!process.env.RESEND_API_KEY || !process.env.RECEIPT_FROM) {
+    return { sent: false, reason: 'Falta configurar RESEND_API_KEY y RECEIPT_FROM en Vercel.' };
+  }
+
+  const currency = process.env.PAYMENT_CURRENCY || 'USD';
+  const total = new Intl.NumberFormat('es', { style: 'currency', currency }).format(
+    (Number(reservation.total_cents) || 0) / 100,
+  );
+  const paidAt = reservation.paid_at
+    ? new Date(reservation.paid_at).toLocaleString('es')
+    : 'Confirmado';
+  const method = reservation.payment_method === 'cash'
+    ? 'Efectivo confirmado por administración'
+    : 'Pago de prueba (no realiza un cobro real)';
+  const paymentStatus = reservation.payment_status === 'paid'
+    ? 'Pago confirmado'
+    : reservation.payment_method === 'cash'
+      ? 'Pendiente de confirmación del efectivo'
+      : reservation.payment_status === 'pending'
+        ? 'Pendiente de pago'
+        : 'Pago no iniciado';
+  const isReceipt = type === 'receipt';
+  const mailTitle = isReceipt ? 'Comprobante de pago' : 'Confirmación de reserva';
+  const mailHeading = isReceipt ? 'PAGO CONFIRMADO' : 'RESERVA REGISTRADA';
+  const folio = `ML-${String(reservation.id).slice(0, 8).toUpperCase()}`;
+  const schedule = reservation.start_time
+    ? `${String(reservation.start_time).slice(0, 5)}${reservation.end_time ? `–${String(reservation.end_time).slice(0, 5)}` : ''}`
+    : 'Sin horario especificado';
+  const safe = {
+    name: escapeHtml(reservation.customer_name),
+    email: escapeHtml(reservation.customer_email),
+    folio: escapeHtml(folio),
+    paidAt: escapeHtml(paidAt),
+    eventDate: escapeHtml(new Date(`${String(reservation.reservation_date).slice(0, 10)}T12:00:00`).toLocaleDateString('es', {
+      day: 'numeric', month: 'long', year: 'numeric',
+    })),
+    schedule: escapeHtml(schedule),
+    tables: escapeHtml(reservation.tables),
+    chairs: escapeHtml(reservation.chairs),
+    total: escapeHtml(total),
+    method: escapeHtml(method),
+  };
+  const text = [
+    `${mailTitle} MesaLista`,
+    `Folio: ${folio}`,
+    `Responsable: ${reservation.customer_name} (${reservation.customer_email})`,
+    `Fecha del evento: ${safe.eventDate}`,
+    `Horario: ${schedule}`,
+    `Mesas: ${reservation.tables} · Sillas: ${reservation.chairs}`,
+    `Total: ${total}`,
+    `Estado del pago: ${paymentStatus}`,
+    `Método de pago: ${method}`,
+    ...(isReceipt ? [`Fecha de pago: ${paidAt}`, 'Comprobante informativo; no sustituye una factura fiscal.'] : []),
+  ].join('\n');
+  const statusLine = isReceipt ? `<br><strong>Fecha de pago:</strong> ${safe.paidAt}` : `<br><strong>Estado del pago:</strong> ${escapeHtml(paymentStatus)}`;
+  const footnote = isReceipt
+    ? `Este es un comprobante informativo; no sustituye una factura fiscal. ${reservation.payment_method === 'cash' ? '' : 'El pago de prueba no realizó ningún cobro real.'}`
+    : `Método de pago: ${safe.method}. ${reservation.payment_status === 'paid' ? 'Pago confirmado.' : 'Este correo confirma la reserva, no confirma la recepción del pago.'}`;
+  const html = `<!doctype html><html lang="es"><body style="margin:0;background:#f4f7f6;padding:28px;font-family:Arial,sans-serif;color:#263538"><main style="max-width:560px;margin:auto;background:#fff;border:1px solid #e4ebea;border-radius:14px;overflow:hidden"><header style="padding:22px 26px;background:#263538;color:#fff;font-weight:bold;letter-spacing:1px">MESA<span style="color:#a9dd70">LISTA</span><span style="float:right;font-size:12px;letter-spacing:0">COMPROBANTE</span></header><section style="padding:26px"><p style="margin:0;color:#328e7c;font-size:11px;font-weight:bold;letter-spacing:1px">${mailHeading}</p><h1 style="margin:8px 0 20px;font-size:24px">${mailTitle}</h1><p style="margin:0 0 18px;color:#657474">Hola ${safe.name}, ${isReceipt ? 'tu pago quedó registrado.' : 'registramos tu reserva.'} Aquí están los datos.</p><div style="padding:14px;background:#f4f7f6;border-radius:8px;line-height:1.8"><strong>Folio:</strong> ${safe.folio}<br><strong>Cuenta:</strong> ${safe.name} · ${safe.email}<br><strong>Fecha del evento:</strong> ${safe.eventDate}<br><strong>Horario:</strong> ${safe.schedule}<br><strong>Mesas:</strong> ${safe.tables} · <strong>Sillas:</strong> ${safe.chairs}<br><strong>Total:</strong> ${safe.total}${statusLine}<br><strong>Método:</strong> ${safe.method}</div><p style="margin:20px 0 0;color:#7c8989;font-size:11px;line-height:1.6">${footnote}</p></section></main></body></html>`;
+
+  try {
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: process.env.RECEIPT_FROM,
+        to: [reservation.customer_email],
+        subject: `${mailTitle} MesaLista ${folio}`,
+        html,
+        text,
+      }),
+      signal: AbortSignal.timeout(10000),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      console.error('No se pudo enviar el correo:', { reservationId, status: response.status, error: data.message || data.name });
+      return { sent: false, reason: 'Resend rechazó el envío. Verifica la clave y el dominio remitente en Resend.' };
+    }
+    const updated = await pool.query(
+      `UPDATE reservations SET ${sentAtColumn} = NOW()
+       WHERE id = $1 AND ${sentAtColumn} IS NULL
+       RETURNING ${sentAtColumn}`,
+      [reservationId],
+    );
+    return { sent: true, email: reservation.customer_email, type, sentAt: updated.rows[0]?.[sentAtColumn] || null };
+  } catch (error) {
+    console.error('Falló el envío del correo de reserva:', { reservationId, error: error.message });
+    return { sent: false, reason: 'No se pudo enviar el correo. Revisa la configuración del proveedor y vuelve a intentarlo.' };
+  }
+}
+
 async function getAvailability(db, date, startTime = null, endTime = null) {
   const result = await db.query(
     `SELECT i.resource, i.total,
@@ -257,7 +378,8 @@ app.post('/api/guest/reservations', async (req, res) => {
     }
     return row;
   });
-  res.status(201).json({ reservation, guestKey, paymentMode: 'demo' });
+  const reservationEmail = await sendReservationEmail(reservation.id, 'reservation');
+  res.status(201).json({ reservation, guestKey, reservationEmail, paymentMode: 'demo' });
 });
 
 app.post('/api/guest/reservations/:id/demo-payment', async (req, res) => {
@@ -305,26 +427,35 @@ app.post('/api/guest/payments/demo/complete', async (req, res) => {
   }
   const completed = await inTransaction(async (db) => {
     const found = await db.query(
-      `SELECT p.*, r.id AS reservation_id, r.contact_email, r.payment_status, r.total_cents, r.tables, r.chairs, r.status AS reservation_status
+      `SELECT p.*, r.id AS reservation_id, r.contact_email, r.payment_status, r.total_cents,
+              r.tables, r.chairs, r.paid_at, r.status AS reservation_status
        FROM payment_attempts p JOIN reservations r ON r.id = p.reservation_id
        WHERE p.id = $1 AND r.guest_access_hash = $2 FOR UPDATE OF p, r`,
       [attemptId, hashGuestKey(key)],
     );
     const attempt = found.rows[0];
     if (!attempt) fail(404, 'No se encontró esta simulación de pago.');
-    if (attempt.status === 'succeeded') return { status: 'succeeded' };
+    if (attempt.status === 'succeeded') {
+      return { reservationId: attempt.reservation_id, status: 'succeeded', paidAt: attempt.paid_at };
+    }
     if (attempt.status !== 'pending' || attempt.reservation_status !== 'pending') fail(409, 'La simulación ya no se puede completar.');
     await db.query(`UPDATE payment_attempts SET status = 'succeeded', completed_at = NOW() WHERE id = $1`, [attempt.id]);
-    await db.query(`UPDATE reservations SET status = 'confirmed', payment_status = 'paid', updated_at = NOW() WHERE id = $1`, [attempt.reservation_id]);
+    const paid = await db.query(
+      `UPDATE reservations SET status = 'confirmed', payment_status = 'paid',
+       paid_at = COALESCE(paid_at, NOW()), updated_at = NOW() WHERE id = $1
+       RETURNING paid_at`,
+      [attempt.reservation_id],
+    );
     await logMovement(db, {
       actorId: null, actorEmail: attempt.contact_email, quantity: attempt.tables + attempt.chairs,
       operation: 'demo_payment_completed', entityType: 'reservation', entityId: attempt.reservation_id,
       previousState: { status: attempt.reservation_status, payment_status: attempt.payment_status },
       newState: { status: 'confirmed', payment_status: 'paid', provider: 'mesalista_demo', amount_cents: attempt.total_cents },
     });
-    return { status: 'succeeded' };
+    return { reservationId: attempt.reservation_id, status: 'succeeded', paidAt: paid.rows[0].paid_at };
   });
-  res.json({ ...completed, simulated: true });
+  const receiptEmail = await sendReservationEmail(completed.reservationId, 'receipt');
+  res.json({ ...completed, receiptEmail, simulated: true });
 });
 
 app.post('/api/guest/payments/demo/cancel', async (req, res) => {
@@ -446,6 +577,28 @@ app.get('/api/reservations', async (req, res) => {
   res.json({ reservations: result.rows });
 });
 
+app.post('/api/reservations/:id/receipt-email', async (req, res) => {
+  const owned = await pool.query(
+    `SELECT id FROM reservations
+     WHERE id = $1 AND ($2::UUID IS NULL OR user_id = $2)`,
+    [req.params.id, req.auth.role === 'admin' ? null : req.auth.sub],
+  );
+  if (!owned.rows[0]) fail(404, 'No se encontró esta reserva.');
+  const receiptEmail = await sendReservationEmail(req.params.id, 'receipt');
+  res.json({ receiptEmail });
+});
+
+app.post('/api/reservations/:id/reservation-email', async (req, res) => {
+  const owned = await pool.query(
+    `SELECT id FROM reservations
+     WHERE id = $1 AND ($2::UUID IS NULL OR user_id = $2)`,
+    [req.params.id, req.auth.role === 'admin' ? null : req.auth.sub],
+  );
+  if (!owned.rows[0]) fail(404, 'No se encontró esta reserva.');
+  const reservationEmail = await sendReservationEmail(req.params.id, 'reservation');
+  res.json({ reservationEmail });
+});
+
 app.post('/api/reservations', async (req, res) => {
   const { reservationDate, startTime = null, endTime = null, tables = 0, chairs = 0, paymentMethod = 'demo', userId = null } = req.body ?? {};
   if (!validDate(reservationDate) || reservationDate < today()
@@ -488,7 +641,8 @@ app.post('/api/reservations', async (req, res) => {
     }
     return row;
   });
-  res.status(201).json({ reservation, paymentMode: paymentMethod });
+  const reservationEmail = await sendReservationEmail(reservation.id, 'reservation');
+  res.status(201).json({ reservation, reservationEmail, paymentMode: paymentMethod });
 });
 
 app.post('/api/reservations/:id/cash-payment/confirm', requireAdmin, async (req, res) => {
@@ -500,8 +654,10 @@ app.post('/api/reservations/:id/cash-payment/confirm', requireAdmin, async (req,
       || reservation.status !== 'pending') {
       fail(409, 'Esta reserva no tiene un pago en efectivo pendiente de confirmación.');
     }
-    await db.query(
-      `UPDATE reservations SET payment_status = 'paid', status = 'confirmed', updated_at = NOW() WHERE id = $1`,
+    const paid = await db.query(
+      `UPDATE reservations SET payment_status = 'paid', status = 'confirmed',
+       paid_at = COALESCE(paid_at, NOW()), updated_at = NOW() WHERE id = $1
+       RETURNING paid_at`,
       [reservation.id],
     );
     await logMovement(db, {
@@ -510,9 +666,10 @@ app.post('/api/reservations/:id/cash-payment/confirm', requireAdmin, async (req,
       previousState: { status: reservation.status, payment_status: reservation.payment_status, payment_method: 'cash' },
       newState: { status: 'confirmed', payment_status: 'paid', payment_method: 'cash', amount_cents: reservation.total_cents },
     });
-    return { reservationId: reservation.id, status: 'paid', paymentMethod: 'cash' };
+    return { reservationId: reservation.id, status: 'paid', paymentMethod: 'cash', paidAt: paid.rows[0].paid_at };
   });
-  res.json(result);
+  const receiptEmail = await sendReservationEmail(result.reservationId, 'receipt');
+  res.json({ ...result, receiptEmail });
 });
 
 app.post('/api/reservations/:id/demo-payment', async (req, res) => {
@@ -562,7 +719,7 @@ app.post('/api/payments/demo/complete', async (req, res) => {
   const completed = await inTransaction(async (db) => {
     const attemptResult = await db.query(
       `SELECT p.*, r.id AS reservation_id, r.user_id, r.status AS reservation_status,
-              r.payment_status, r.total_cents, r.tables, r.chairs
+              r.payment_status, r.total_cents, r.tables, r.chairs, r.paid_at
        FROM payment_attempts p
        JOIN reservations r ON r.id = p.reservation_id
        WHERE p.id = $1 AND ($2::UUID IS NULL OR r.user_id = $2)
@@ -572,7 +729,7 @@ app.post('/api/payments/demo/complete', async (req, res) => {
     const attempt = attemptResult.rows[0];
     if (!attempt) fail(404, 'No se encontró esta simulación de pago.');
     if (attempt.status === 'succeeded' && attempt.payment_status === 'paid') {
-      return { reservationId: attempt.reservation_id, status: 'paid' };
+      return { reservationId: attempt.reservation_id, status: 'paid', paidAt: attempt.paid_at };
     }
     if (attempt.status !== 'pending' || attempt.reservation_status !== 'pending'
       || attempt.amount_cents !== attempt.total_cents) {
@@ -582,9 +739,10 @@ app.post('/api/payments/demo/complete', async (req, res) => {
       `UPDATE payment_attempts SET status = 'succeeded', completed_at = NOW() WHERE id = $1`,
       [attempt.id],
     );
-    await db.query(
-      `UPDATE reservations SET payment_status = 'paid', status = 'confirmed', updated_at = NOW()
-       WHERE id = $1`,
+    const paid = await db.query(
+      `UPDATE reservations SET payment_status = 'paid', status = 'confirmed',
+       paid_at = COALESCE(paid_at, NOW()), updated_at = NOW()
+       WHERE id = $1 RETURNING paid_at`,
       [attempt.reservation_id],
     );
     await logMovement(db, {
@@ -593,9 +751,10 @@ app.post('/api/payments/demo/complete', async (req, res) => {
       previousState: { status: attempt.reservation_status, payment_status: 'pending' },
       newState: { status: 'confirmed', payment_status: 'paid', provider: 'mesalista_demo', amount_cents: attempt.amount_cents, currency: attempt.currency },
     });
-    return { reservationId: attempt.reservation_id, status: 'paid' };
+    return { reservationId: attempt.reservation_id, status: 'paid', paidAt: paid.rows[0].paid_at };
   });
-  res.json({ ...completed, simulated: true });
+  const receiptEmail = await sendReservationEmail(completed.reservationId, 'receipt');
+  res.json({ ...completed, receiptEmail, simulated: true });
 });
 
 app.post('/api/payments/demo/cancel', async (req, res) => {

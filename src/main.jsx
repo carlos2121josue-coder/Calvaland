@@ -137,6 +137,10 @@ function GuestReservationPage({ theme, onToggleTheme, onBack }) {
   const [guestKey, setGuestKey] = useState('');
   const [checkout, setCheckout] = useState(null);
   const [paid, setPaid] = useState(false);
+  const [guestPaidAt, setGuestPaidAt] = useState(null);
+  const [guestInvoiceOpen, setGuestInvoiceOpen] = useState(false);
+  const [guestReceiptEmail, setGuestReceiptEmail] = useState(null);
+  const [guestReservationEmail, setGuestReservationEmail] = useState(null);
   const total = tables * rates.tables + chairs * rates.chairs;
   const invalidHours = Boolean(start) !== Boolean(end) || Boolean(start && end && end <= start);
 
@@ -211,6 +215,7 @@ function GuestReservationPage({ theme, onToggleTheme, onBack }) {
       });
       setGuestReservation(result.reservation);
       setGuestKey(result.guestKey);
+      setGuestReservationEmail(result.reservationEmail || null);
       if (paymentMethod === 'demo' && result.reservation.total_cents > 0) {
         await beginDemoPayment(result.reservation, result.guestKey);
       }
@@ -233,6 +238,17 @@ function GuestReservationPage({ theme, onToggleTheme, onBack }) {
           : guestReservation.payment_method === 'cash'
             ? 'Registramos la reserva a nombre de ' + guestReservation.contact_email + '. Los recursos quedan apartados; el pago y la confirmación quedan pendientes hasta que administración reciba el efectivo.'
             : 'La solicitud quedó registrada y los recursos están apartados. El administrador puede ver tu correo; no hay un portal público para consultar o cancelar reservas.'}</p>
+        {guestReservationEmail && <p className={guestReservationEmail.sent ? 'receipt-email-success' : 'receipt-email-warning'}>
+          {guestReservationEmail.sent
+            ? `Enviamos la confirmación de la reserva a ${guestReservationEmail.email}.`
+            : `La reserva se registró, pero no se pudo enviar la confirmación: ${guestReservationEmail.reason}`}
+        </p>}
+        {paid && guestReceiptEmail && <p className={guestReceiptEmail.sent ? 'receipt-email-success' : 'receipt-email-warning'}>
+          {guestReceiptEmail.sent
+            ? `También enviamos una copia del comprobante a ${guestReceiptEmail.email}.`
+            : `El pago sí quedó confirmado, pero no se pudo enviar el correo: ${guestReceiptEmail.reason}`}
+        </p>}
+        {paid && <button className="table-action" onClick={() => setGuestInvoiceOpen(true)}>Ver comprobante</button>}
         {!paid && guestReservation.payment_method === 'demo' && guestKey && guestReservation.total_cents > 0 && <button className="button primary" disabled={busy} onClick={() => {
           setBusy(true);
           setError('');
@@ -275,10 +291,23 @@ function GuestReservationPage({ theme, onToggleTheme, onBack }) {
       } finally {
         setBusy(false);
       }
-    }} onClose={(completed) => {
+    }} onClose={(completed, payment) => {
       setCheckout(null);
-      if (completed) setPaid(true);
+      if (completed) {
+        setPaid(true);
+        setGuestPaidAt(payment?.paidAt || new Date().toISOString());
+        setGuestReceiptEmail(payment?.receiptEmail || null);
+        setGuestInvoiceOpen(true);
+      }
     }} />}
+    {guestInvoiceOpen && guestReservation && paid && <InvoiceDocument
+      reservation={guestReservation}
+      currency={rates.currency}
+      customerName={guestReservation.contact_name || form.name || 'Invitado'}
+      customerEmail={guestReservation.contact_email || form.email}
+      paidAt={guestPaidAt}
+      onClose={() => setGuestInvoiceOpen(false)}
+    />}
   </main>;
 }
 
@@ -304,6 +333,7 @@ function App() {
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const [sessionExpired, setSessionExpired] = useState(false);
+  const [invoiceId, setInvoiceId] = useState(null);
   const [busy, setBusy] = useState(false);
   const isAdmin = session?.user?.role === 'admin';
 
@@ -341,6 +371,23 @@ function App() {
   }, [session, refresh, refreshAdmin]);
 
   useEffect(() => {
+    const userId = session?.user?.id;
+    if (!userId || invoiceId) return;
+    const paidReservations = reservations.filter((reservation) => reservation.payment_status === 'paid'
+      && (!isAdmin || reservation.user_id === userId));
+    if (!paidReservations.length) return;
+    let dismissed = [];
+    try {
+      const stored = JSON.parse(localStorage.getItem(`mesalista-dismissed-invoices:${userId}`) || '[]');
+      if (Array.isArray(stored)) dismissed = stored;
+    } catch {
+      dismissed = [];
+    }
+    const nextInvoice = paidReservations.find((reservation) => !dismissed.includes(reservation.id));
+    if (nextInvoice) setInvoiceId(nextInvoice.id);
+  }, [session?.user?.id, isAdmin, invoiceId, reservations]);
+
+  useEffect(() => {
     const handleExpiredSession = () => {
       localStorage.removeItem('mesalista-session');
       setSession(null);
@@ -350,6 +397,7 @@ function App() {
       setMovements([]);
       setUsers([]);
       setDemoReservation(null);
+      setInvoiceId(null);
       setSessionExpired(true);
       setError('');
       setNotice('');
@@ -391,15 +439,42 @@ function App() {
     localStorage.removeItem('mesalista-session');
     setSession(null);
     setDashboard(null);
+    setInvoiceId(null);
+  };
+  const dismissInvoice = (reservationId) => {
+    if (session?.user?.id) {
+      const key = `mesalista-dismissed-invoices:${session.user.id}`;
+      let dismissed = [];
+      try {
+        const stored = JSON.parse(localStorage.getItem(key) || '[]');
+        if (Array.isArray(stored)) dismissed = stored;
+      } catch {
+        dismissed = [];
+      }
+      if (!dismissed.includes(reservationId)) {
+        localStorage.setItem(key, JSON.stringify([...dismissed, reservationId]));
+      }
+    }
+    setInvoiceId(null);
   };
   const run = async (action, success) => {
     setBusy(true);
     setError('');
     try {
-      await action();
-      if (success) setNotice(success);
+      const result = await action();
+      const emailResult = result?.reservationEmail || result?.receiptEmail;
+      if (emailResult?.sent) {
+        setNotice(result?.reservationEmail
+          ? `Reserva guardada. Enviamos la confirmación a ${emailResult.email}.`
+          : `Comprobante enviado a ${emailResult.email}.`);
+      } else if (emailResult && !emailResult.sent) {
+        setError(`${result?.reservationEmail ? 'La reserva se guardó' : 'El pago se confirmó'}, pero no se pudo enviar el correo: ${emailResult.reason}`);
+      } else if (success) {
+        setNotice(success);
+      }
       await refresh();
       if (isAdmin) await refreshAdmin();
+      return result ?? true;
     } catch (err) {
       setError(err.message);
       try {
@@ -407,8 +482,47 @@ function App() {
       } catch (refreshError) {
         setError(`${err.message} No se pudo actualizar el panel: ${refreshError.message}`);
       }
+      return false;
     } finally {
       setBusy(false);
+    }
+  };
+  const emailReceipt = async (reservationId) => {
+    const result = await run(
+      () => api(`/reservations/${reservationId}/receipt-email`, session.token, { method: 'POST', body: '{}' }),
+    );
+    if (!result || result === true) return;
+    if (result.receiptEmail?.sent) {
+      setNotice(`Comprobante enviado a ${result.receiptEmail.email}.`);
+      setReservations((current) => current.map((reservation) => reservation.id === reservationId
+        ? { ...reservation, receipt_email_sent_at: result.receiptEmail.sentAt || new Date().toISOString() }
+        : reservation));
+    } else {
+      setError(result.receiptEmail?.reason || 'No se pudo enviar el comprobante por correo.');
+    }
+  };
+  const emailReservation = async (reservationId, type) => {
+    const path = type === 'receipt' ? 'receipt-email' : 'reservation-email';
+    const result = await run(
+      () => api(`/reservations/${reservationId}/${path}`, session.token, { method: 'POST', body: '{}' }),
+    );
+    if (!result || result === true) return;
+    const emailResult = result.receiptEmail || result.reservationEmail;
+    if (emailResult?.sent) {
+      setNotice(`Correo enviado a ${emailResult.email}.`);
+      const sentAtField = type === 'receipt' ? 'receipt_email_sent_at' : 'reservation_email_sent_at';
+      setReservations((current) => current.map((reservation) => reservation.id === reservationId
+        ? { ...reservation, [sentAtField]: emailResult.sentAt || new Date().toISOString() }
+        : reservation));
+    } else {
+      setError(emailResult?.reason || 'No se pudo enviar el correo.');
+    }
+  };
+  const showReceiptEmailResult = (receiptEmail) => {
+    if (receiptEmail?.sent) {
+      setNotice(`Comprobante enviado a ${receiptEmail.email}.`);
+    } else {
+      setError(`Pago confirmado, pero no se pudo enviar el comprobante: ${receiptEmail?.reason || 'revisa la configuración de correo'}`);
     }
   };
 
@@ -430,6 +544,7 @@ function App() {
     { id: 'prestamos', label: 'Préstamos', icon: '↗' },
     ...(isAdmin ? [{ id: 'historial', label: 'Historial', icon: '◷' }] : []),
   ];
+  const invoiceReservation = reservations.find((reservation) => reservation.id === invoiceId);
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -451,13 +566,27 @@ function App() {
           {error && <div className="toast error-toast" role="alert">{error}<button onClick={() => setError('')}>×</button></div>}
           {notice && <div className="toast success-toast" role="status">{notice}<button onClick={() => setNotice('')}>×</button></div>}
           {page === 'inicio' && <Dashboard dashboard={dashboard} isAdmin={isAdmin} reservations={reservations} loans={loans} onGo={setPage} onRun={run} token={session.token} />}
-          {page === 'reservas' && <Reservations dashboard={dashboard} reservations={reservations} users={users} currentUser={session.user} busy={busy} onRun={run} token={session.token} isAdmin={isAdmin} onDemoPayment={setDemoReservation} />}
+          {page === 'reservas' && <Reservations dashboard={dashboard} reservations={reservations} users={users} currentUser={session.user} busy={busy} onRun={run} token={session.token} isAdmin={isAdmin} onDemoPayment={setDemoReservation} onShowInvoice={setInvoiceId} onReceiptEmail={showReceiptEmailResult} onEmailReservation={emailReservation} />}
           {page === 'prestamos' && <Loans loans={loans} users={users} reservations={reservations} isAdmin={isAdmin} busy={busy} onRun={run} token={session.token} />}
           {page === 'historial' && isAdmin && <History movements={movements} users={users} onRun={run} token={session.token} onRefresh={refreshAdmin} />}
           <footer className="footer">MesaLista <span>·</span> Inventario claro, eventos tranquilos</footer>
         </div>
       </main>
-      {demoReservation && <DemoCheckout reservation={demoReservation} currency={dashboard?.rates.currency || 'USD'} token={session.token} onRun={run} onClose={() => setDemoReservation(null)} />}
+      {demoReservation && <DemoCheckout reservation={demoReservation} currency={dashboard?.rates.currency || 'USD'} token={session.token} onRun={run} onClose={(completed, payment) => {
+        setDemoReservation(null);
+        if (completed && payment?.receiptEmail) showReceiptEmailResult(payment.receiptEmail);
+      }} />}
+      {invoiceReservation && <InvoiceDocument
+        reservation={invoiceReservation}
+        currency={dashboard?.rates.currency || 'USD'}
+        customerName={invoiceReservation.user_name || invoiceReservation.contact_name
+          || (invoiceReservation.user_id === session.user.id ? session.user.name : 'Usuario')}
+        customerEmail={invoiceReservation.user_email || invoiceReservation.contact_email
+          || (invoiceReservation.user_id === session.user.id ? session.user.email : '—')}
+        onClose={() => dismissInvoice(invoiceId)}
+        onEmailReceipt={() => emailReceipt(invoiceReservation.id)}
+        receiptEmailBusy={busy}
+      />}
     </div>
   );
 }
@@ -521,7 +650,7 @@ function Metric({ label, value, icon, tone }) {
   return <article className="metric-card"><span className={`metric-icon ${tone}`}>{icon}</span><div><span className="metric-value">{value}</span><span className="metric-label">{label}</span></div><span className="metric-corner">↗</span></article>;
 }
 
-function Reservations({ dashboard, reservations, users, currentUser, busy, onRun, token, isAdmin, onDemoPayment }) {
+function Reservations({ dashboard, reservations, users, currentUser, busy, onRun, token, isAdmin, onDemoPayment, onShowInvoice, onReceiptEmail, onEmailReservation }) {
   const [tables, setTables] = useState(0);
   const [chairs, setChairs] = useState(0);
   const [date, setDate] = useState(localDate());
@@ -573,7 +702,7 @@ function Reservations({ dashboard, reservations, users, currentUser, busy, onRun
   const reserve = (event) => {
     event.preventDefault();
     onRun(async () => {
-      const { reservation } = await api('/reservations', token, {
+      const result = await api('/reservations', token, {
         method: 'POST',
         body: JSON.stringify({
           reservationDate: date, startTime: start || null, endTime: end || null,
@@ -581,10 +710,12 @@ function Reservations({ dashboard, reservations, users, currentUser, busy, onRun
           ...(isAdmin ? { userId: customerId } : {}),
         }),
       });
+      const { reservation } = result;
       if (paymentMethod === 'demo' && reservation.total_cents > 0) {
         const { attempt } = await api(`/reservations/${reservation.id}/demo-payment`, token, { method: 'POST', body: '{}' });
         onDemoPayment({ ...reservation, paymentAttemptId: attempt.id, contact_email: reservation.contact_email || currentUser.email });
       }
+      return { reservationEmail: result.reservationEmail };
     }, paymentMethod === 'cash'
       ? 'Reserva guardada. El pago en efectivo queda pendiente de confirmación administrativa.'
       : total > 0 ? '' : 'Reserva registrada como pendiente.');
@@ -630,15 +761,24 @@ function Reservations({ dashboard, reservations, users, currentUser, busy, onRun
             <td>{money(reservation.total_cents, dashboard?.rates.currency)}</td>
             <td><span className="payment-method-label">{reservation.payment_method === 'cash' ? 'Efectivo' : 'Pago de prueba'}</span><small className="cell-sub"><Status status={reservation.payment_status} /></small></td>
             <td><Status status={reservation.status} /></td>
-            <td><ReservationActions
-              reservation={reservation}
-              isAdmin={isAdmin}
-              dueDate={dueDates[reservation.id] || ''}
-              onDueDateChange={(value) => setDueDates({ ...dueDates, [reservation.id]: value })}
-              token={token}
-              onRun={onRun}
-              onDemoPayment={onDemoPayment}
-            /></td>
+            <td><div className="reservation-row-actions">
+              <ReservationActions
+                reservation={reservation}
+                isAdmin={isAdmin}
+                dueDate={dueDates[reservation.id] || ''}
+                onDueDateChange={(value) => setDueDates({ ...dueDates, [reservation.id]: value })}
+                token={token}
+                onRun={onRun}
+                onDemoPayment={onDemoPayment}
+                onShowInvoice={onShowInvoice}
+                onReceiptEmail={onReceiptEmail}
+              />
+              {reservation.payment_status === 'paid' && (isAdmin || reservation.user_id === currentUser.id)
+                && <button className="table-action" onClick={() => onShowInvoice(reservation.id)}>Ver comprobante</button>}
+              {reservation.payment_status === 'paid' && !reservation.receipt_email_sent_at
+                ? <button className="table-action" disabled={busy} onClick={() => onEmailReservation(reservation.id, 'receipt')}>Enviar comprobante por correo</button>
+                : !reservation.reservation_email_sent_at && <button className="table-action" disabled={busy} onClick={() => onEmailReservation(reservation.id, 'reservation')}>Enviar confirmación por correo</button>}
+            </div></td>
           </tr>)}</tbody>
         </table>
       </div> : <EmptyState text="Aún no tienes reservas. Solicita la primera cuando quieras." />}
@@ -646,7 +786,7 @@ function Reservations({ dashboard, reservations, users, currentUser, busy, onRun
   </>;
 }
 
-function ReservationActions({ reservation, isAdmin, dueDate, onDueDateChange, token, onRun, onDemoPayment }) {
+function ReservationActions({ reservation, isAdmin, dueDate, onDueDateChange, token, onRun, onDemoPayment, onShowInvoice, onReceiptEmail }) {
   const cancel = () => {
     if (!window.confirm('¿Cancelar esta reserva? Los recursos volverán a estar disponibles.')) return;
     onRun(
@@ -656,10 +796,19 @@ function ReservationActions({ reservation, isAdmin, dueDate, onDueDateChange, to
   };
   if (isAdmin && reservation.payment_method === 'cash'
     && reservation.status === 'pending' && reservation.payment_status === 'pending') {
-    return <button className="table-action" onClick={() => onRun(
-      () => api(`/reservations/${reservation.id}/cash-payment/confirm`, token, { method: 'POST', body: '{}' }),
-      'Pago en efectivo confirmado y registrado en el historial.',
-    )}>Confirmar efectivo</button>;
+    return <button className="table-action" onClick={async () => {
+      const confirmed = await onRun(
+        async () => {
+          const result = await api(`/reservations/${reservation.id}/cash-payment/confirm`, token, { method: 'POST', body: '{}' });
+          return result;
+        },
+        'Pago en efectivo confirmado y registrado en el historial.',
+      );
+      if (confirmed && confirmed !== true) {
+        onReceiptEmail(confirmed.receiptEmail);
+        onShowInvoice(reservation.id);
+      }
+    }}>Confirmar efectivo</button>;
   }
   if (isAdmin && reservation.status === 'confirmed' && reservation.payment_status === 'paid') {
     return <div className="return-controls">
@@ -720,11 +869,11 @@ function DemoCheckout({ reservation, currency, token, guestKey = null, onRun, on
         {reservation.contact_email && <div className="demo-account-email"><span>Correo de la reserva</span><strong>{reservation.contact_email}</strong></div>}
         <div className="demo-explainer"><span>ⓘ</span><p>Al simular la aprobación, la reserva quedará marcada como pagada <strong>solo dentro de esta base de datos de prueba</strong>. No se transferirá dinero.</p></div>
         <button className="button primary full demo-approve" onClick={() => onRun(async () => {
-          await api(`${paymentPrefix}/complete`, token, {
+          const payment = await api(`${paymentPrefix}/complete`, token, {
             method: 'POST', body: JSON.stringify({ attemptId: reservation.paymentAttemptId }), headers: keyHeaders,
           });
-          onClose(true);
-        }, 'Pago de prueba confirmado. No se realizó ningún cobro.')}>Simular aprobación del pago <span>→</span></button>
+          onClose(true, payment);
+        }, '')}>Simular aprobación del pago <span>→</span></button>
         <button className="demo-cancel" onClick={() => onRun(async () => {
           await api(`${paymentPrefix}/cancel`, token, {
             method: 'POST', body: JSON.stringify({ attemptId: reservation.paymentAttemptId }), headers: keyHeaders,
@@ -732,6 +881,56 @@ function DemoCheckout({ reservation, currency, token, guestKey = null, onRun, on
           onClose(false);
         }, 'La simulación se canceló. No se hizo ningún cobro.')}>Volver sin pagar</button>
         <p className="demo-disclaimer">Entorno de demostración. No se solicitan ni almacenan tarjetas, contraseñas o credenciales de pago.</p>
+      </div>
+    </section>
+  </div>;
+}
+
+function InvoiceDocument({ reservation, currency, customerName, customerEmail, paidAt = reservation.paid_at, onClose, onEmailReceipt, receiptEmailBusy = false }) {
+  const paymentMethod = reservation.payment_method === 'cash'
+    ? 'Efectivo confirmado por administración'
+    : 'Pago de prueba simulado';
+  return <div className="invoice-backdrop">
+    <section className="invoice-document" role="dialog" aria-modal="true" aria-labelledby="invoice-title">
+      <div className="invoice-actions">
+        <span className="invoice-kicker">MESA<span>LISTA</span> · COMPROBANTE</span>
+        <button className="invoice-close" type="button" aria-label="Cerrar comprobante" onClick={onClose}>×</button>
+      </div>
+      <div className="invoice-heading">
+        <div><span className="eyebrow">PAGO CONFIRMADO</span><h2 id="invoice-title">Comprobante de pago</h2></div>
+        <span className="invoice-check" aria-hidden="true">✓</span>
+      </div>
+      <div className="invoice-meta">
+        <div><span>Folio</span><strong>ML-{String(reservation.id).slice(0, 8).toUpperCase()}</strong></div>
+        <div><span>Fecha de pago</span><strong>{paidAt ? new Date(paidAt).toLocaleString('es', { dateStyle: 'medium', timeStyle: 'short' }) : 'Confirmado'}</strong></div>
+      </div>
+      <div className="invoice-customer">
+        <span>RESPONSABLE</span><strong>{customerName || reservation.user_name || reservation.contact_name || 'Usuario'}</strong>
+        <small>{customerEmail || reservation.user_email || reservation.contact_email || '—'}</small>
+      </div>
+      <div className="invoice-reservation">
+        <div><span>Fecha del evento</span><strong>{dateLabel(reservation.reservation_date)}</strong></div>
+        {reservation.start_time && <div><span>Horario</span><strong>{String(reservation.start_time).slice(0, 5)}{reservation.end_time ? `–${String(reservation.end_time).slice(0, 5)}` : ''}</strong></div>}
+      </div>
+      <div className="invoice-items">
+        <div className="invoice-table-head"><span>Recurso</span><span>Cantidad</span></div>
+        {Number(reservation.tables) > 0 && <div><span>Mesas</span><strong>{reservation.tables}</strong></div>}
+        {Number(reservation.chairs) > 0 && <div><span>Sillas</span><strong>{reservation.chairs}</strong></div>}
+      </div>
+      <div className="invoice-total"><span>Total confirmado</span><strong>{money(reservation.total_cents, currency)}</strong></div>
+      <div className="invoice-payment"><span>Método de pago</span><strong>{paymentMethod}</strong></div>
+      <p className={reservation.receipt_email_sent_at ? 'invoice-email-status sent' : 'invoice-email-status'}>
+        {reservation.receipt_email_sent_at
+          ? `Copia enviada por correo a ${customerEmail || reservation.user_email || reservation.contact_email}.`
+          : 'La copia por correo todavía no se ha enviado.'}
+      </p>
+      <p className="invoice-disclaimer">Comprobante informativo; no sustituye una factura fiscal. {reservation.payment_method !== 'cash' && 'El pago de prueba no realizó ningún cobro real.'}</p>
+      <div className="invoice-footer">
+        <button className="button primary" type="button" onClick={() => window.print()}>Imprimir comprobante</button>
+        {!reservation.receipt_email_sent_at && onEmailReceipt && <button className="table-action" type="button" disabled={receiptEmailBusy} onClick={onEmailReceipt}>
+          {receiptEmailBusy ? 'Enviando…' : 'Enviar por correo'}
+        </button>}
+        <button className="text-button" type="button" onClick={onClose}>Cerrar</button>
       </div>
     </section>
   </div>;
