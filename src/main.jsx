@@ -334,6 +334,7 @@ function App() {
   const [error, setError] = useState('');
   const [sessionExpired, setSessionExpired] = useState(false);
   const [invoiceId, setInvoiceId] = useState(null);
+  const [receiptEmailError, setReceiptEmailError] = useState('');
   const [busy, setBusy] = useState(false);
   const isAdmin = session?.user?.role === 'admin';
 
@@ -442,6 +443,7 @@ function App() {
     setInvoiceId(null);
   };
   const dismissInvoice = (reservationId) => {
+    setReceiptEmailError('');
     if (session?.user?.id) {
       const key = `mesalista-dismissed-invoices:${session.user.id}`;
       let dismissed = [];
@@ -457,7 +459,7 @@ function App() {
     }
     setInvoiceId(null);
   };
-  const run = async (action, success) => {
+  const run = async (action, success, onError) => {
     setBusy(true);
     setError('');
     try {
@@ -477,6 +479,7 @@ function App() {
       return result ?? true;
     } catch (err) {
       setError(err.message);
+      onError?.(err.message);
       try {
         await refresh();
       } catch (refreshError) {
@@ -488,8 +491,11 @@ function App() {
     }
   };
   const emailReceipt = async (reservationId) => {
+    setReceiptEmailError('');
     const result = await run(
       () => api(`/reservations/${reservationId}/receipt-email`, session.token, { method: 'POST', body: '{}' }),
+      undefined,
+      setReceiptEmailError,
     );
     if (!result || result === true) return;
     if (result.receiptEmail?.sent) {
@@ -498,7 +504,9 @@ function App() {
         ? { ...reservation, receipt_email_sent_at: result.receiptEmail.sentAt || new Date().toISOString() }
         : reservation));
     } else {
-      setError(result.receiptEmail?.reason || 'No se pudo enviar el comprobante por correo.');
+      const reason = result.receiptEmail?.reason || 'No se pudo enviar el comprobante por correo.';
+      setReceiptEmailError(reason);
+      setError(reason);
     }
   };
   const emailReservation = async (reservationId, type) => {
@@ -585,6 +593,7 @@ function App() {
           || (invoiceReservation.user_id === session.user.id ? session.user.email : '—')}
         onClose={() => dismissInvoice(invoiceId)}
         onEmailReceipt={() => emailReceipt(invoiceReservation.id)}
+        receiptEmailError={receiptEmailError}
         receiptEmailBusy={busy}
       />}
     </div>
@@ -886,7 +895,7 @@ function DemoCheckout({ reservation, currency, token, guestKey = null, onRun, on
   </div>;
 }
 
-function InvoiceDocument({ reservation, currency, customerName, customerEmail, paidAt = reservation.paid_at, onClose, onEmailReceipt, receiptEmailBusy = false }) {
+function InvoiceDocument({ reservation, currency, customerName, customerEmail, paidAt = reservation.paid_at, onClose, onEmailReceipt, receiptEmailBusy = false, receiptEmailError = '' }) {
   const paymentMethod = reservation.payment_method === 'cash'
     ? 'Efectivo confirmado por administración'
     : 'Pago de prueba simulado';
@@ -924,6 +933,7 @@ function InvoiceDocument({ reservation, currency, customerName, customerEmail, p
           ? `Copia enviada por correo a ${customerEmail || reservation.user_email || reservation.contact_email}.`
           : 'La copia por correo todavía no se ha enviado.'}
       </p>
+      {receiptEmailError && <p className="form-error" role="alert">{receiptEmailError}</p>}
       <p className="invoice-disclaimer">Comprobante informativo; no sustituye una factura fiscal. {reservation.payment_method !== 'cash' && 'El pago de prueba no realizó ningún cobro real.'}</p>
       <div className="invoice-footer">
         <button className="button primary" type="button" onClick={() => window.print()}>Imprimir comprobante</button>

@@ -106,7 +106,10 @@ async function sendWithGmailApi({ to, subject, html, text }) {
   const tokenData = await tokenResponse.json().catch(() => ({}));
   if (!tokenResponse.ok || typeof tokenData.access_token !== 'string') {
     console.error('No se pudo renovar el acceso de Gmail:', { status: tokenResponse.status, error: tokenData.error });
-    return { sent: false, reason: 'No se pudo autorizar Gmail. Revisa las credenciales OAuth y el permiso gmail.send en Vercel.' };
+    return {
+      sent: false,
+      reason: `Google rechazó la autorización (${tokenData.error || tokenResponse.status}). Revisa GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN y el permiso gmail.send en Vercel.`,
+    };
   }
 
   const boundary = `mesalista_${randomBytes(18).toString('hex')}`;
@@ -143,11 +146,15 @@ async function sendWithGmailApi({ to, subject, html, text }) {
   });
   const sendData = await sendResponse.json().catch(() => ({}));
   if (!sendResponse.ok) {
+    const gmailError = sendData.error?.status || sendData.error?.message || sendResponse.status;
     console.error('Gmail API rechazó el correo:', {
       status: sendResponse.status,
-      error: sendData.error?.status || sendData.error?.message,
+      error: gmailError,
     });
-    return { sent: false, reason: 'Gmail no aceptó el envío. Verifica el permiso gmail.send y las credenciales OAuth.' };
+    return {
+      sent: false,
+      reason: `Gmail rechazó el envío (${gmailError}). Revisa que GMAIL_USER sea la cuenta autorizada y que el token tenga el permiso gmail.send.`,
+    };
   }
   return { sent: true };
 }
