@@ -10,7 +10,7 @@ Aplicación web responsive para administrar mesas y sillas, sus reservas, prést
 - **Autenticación:** contraseñas con bcrypt y tokens JWT de 12 horas. El rol vigente se consulta en la base de datos, así que un cambio de permisos aplica también a sesiones existentes.
 - **Reservas sin cuenta:** cualquier persona puede enviar una solicitud con su correo sin crear usuario. Solo administración puede consultar esos registros; una clave aleatoria temporal permite completar el pago de prueba, pero no consultar ni cancelar reservas.
 - **Pagos:** permite registrar efectivo pendiente de confirmación administrativa y un simulador local `MesaLista Pay`. La simulación no cobra, no se conecta a PayPal ni solicita tarjetas.
-- **Correos de reserva y pago:** al registrar una reserva, envía sus datos y el estado del pago al correo de la cuenta seleccionada; al confirmar el pago, envía un comprobante HTML mediante la API HTTPS de Resend. Si falla el envío, la reserva o el pago quedan guardados y el mensaje se puede reintentar desde Reservas.
+- **Correos de reserva y pago:** al registrar una reserva, envía sus datos y el estado del pago al correo de la cuenta seleccionada; al confirmar el pago, envía un comprobante HTML. Admite Gmail API con OAuth (sin dominio propio) o Resend. Si falla el envío, la reserva o el pago quedan guardados y el mensaje se puede reintentar desde Reservas.
 - **Apariencia:** identidad visual monocromática de alto contraste con acento lima, tipografía geométrica y selector de tema claro/oscuro guardado localmente.
 
 ## 2. Entidades y relaciones
@@ -193,7 +193,12 @@ server/
 
 3. En `.env`, define `DATABASE_URL`, un `JWT_SECRET` aleatorio de al menos 32 caracteres, y `ADMIN_NAME`, `ADMIN_EMAIL` y `ADMIN_PASSWORD` (mínimo 12 caracteres). Rota primero las contraseñas de base de datos que hayas compartido como imágenes; introduce la nueva cadena directamente en `.env`, no en el chat.
 4. El pago integrado es únicamente una simulación local. En `.env`, cambia `PAYMENT_CURRENCY` si corresponde. No cobra dinero, no se conecta a PayPal ni debe usarse en producción como comprobante real.
-5. Para enviar correos, crea una cuenta en Resend, verifica el dominio del remitente y configura `RESEND_API_KEY` y `RECEIPT_FROM` en `.env`. No compartas la clave ni la guardes en Git.
+5. Para enviar con Gmail sin dominio propio:
+   1. En Google Cloud Console, crea o selecciona un proyecto y habilita **Gmail API**.
+   2. Configura la pantalla de consentimiento OAuth y añade la cuenta emisora como usuario de prueba si la aplicación está en modo de pruebas.
+   3. Crea un cliente OAuth y autoriza el alcance `https://www.googleapis.com/auth/gmail.send`. Para obtener el refresh token con OAuth Playground, agrega `https://developers.google.com/oauthplayground` como URI de redirección autorizada del cliente; en OAuth Playground activa **Use your own OAuth credentials**, introduce el ID y secreto, autoriza el alcance y canjea el código por tokens.
+   4. Guarda en `.env` `GMAIL_USER` (la cuenta Gmail emisora), `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET` y `GMAIL_REFRESH_TOKEN`. Nunca uses la contraseña normal de Gmail ni compartas estos secretos. Los tokens de una app OAuth que permanece en modo de pruebas pueden caducar; para un uso estable, revisa el estado de publicación y los requisitos de verificación de Google.
+   Alternativa: usa Resend con dominio verificado.
 6. Arranca el servidor para crear o actualizar el esquema de forma idempotente y luego, en otra terminal, crea el administrador:
 
    ```bash
@@ -210,14 +215,14 @@ Las tarifas de ejemplo en `.env.example` son **10.00 USD por mesa y 5.00 USD por
 El repositorio incluye `vercel.json` y una función Node.js que adapta Express a Vercel Functions. Vercel compila React/Vite como sitio estático y sirve `/api/*` desde la misma URL; las rutas API anidadas se reescriben a la función común conservando la ruta original para Express. No se necesita un servidor Express permanente.
 
 1. Sube el proyecto a un repositorio Git privado o público e impórtalo en Vercel. Vercel detecta el proyecto; los comandos configurados son `npm run build` y el directorio de salida `dist`.
-2. En **Project → Settings → Environment Variables**, define para Production (y Preview si la usarás):
+2. En **Project → Settings → Git**, confirma que el proyecto esté conectado al repositorio `carlos2121josue-coder/Calvaland` y a la rama `main`. En **Project → Settings → Domains**, confirma que `mesalista-tortillaland.vercel.app` esté asignado a ese proyecto. Luego, en **Project → Settings → Environment Variables**, define para Production (y Preview si la usarás):
    - `DATABASE_URL`: cadena de conexión PostgreSQL de Neon. Usa la URL de Neon con SSL; se recomienda la cadena **pooled** para las funciones serverless.
    - `JWT_SECRET`: secreto aleatorio de al menos 32 caracteres. No reutilices contraseñas ni lo publiques.
    - `WEB_ORIGIN`: origen completo del dominio de producción, por ejemplo `https://tu-dominio.vercel.app`. Se admiten varios orígenes separados por comas. Vercel permite automáticamente el dominio del deployment actual y el dominio de producción del proyecto.
    - `PRICE_TABLE_CENTS=1000`, `PRICE_CHAIR_CENTS=500` y `PAYMENT_CURRENCY=USD`.
-   - `RESEND_API_KEY`: clave privada de Resend.
-   - `RECEIPT_FROM`: remitente de un dominio verificado en Resend, por ejemplo `MesaLista <comprobantes@tudominio.com>`.
-3. Haz el primer deployment. La primera solicitud a `/api/health` crea o actualiza el esquema en Neon bajo un bloqueo transaccional; la ruta debe responder `{"status":"ok","database":"connected",...}`.
+   - Para Gmail API: `GMAIL_USER`, `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET` y `GMAIL_REFRESH_TOKEN` (cuenta autorizada con el alcance `gmail.send`).
+   - Alternativa Resend: `RESEND_API_KEY` y `RECEIPT_FROM` de un dominio verificado.
+3. Guarda las variables y haz un nuevo deployment de `main`. La primera solicitud a `/api/health` crea o actualiza el esquema en Neon bajo un bloqueo transaccional; la ruta debe responder `{"status":"ok","database":"connected",...}`.
 4. Crea la cuenta administradora una sola vez desde un entorno seguro con `DATABASE_URL` apuntando a la misma base Neon. Define `ADMIN_NAME`, `ADMIN_EMAIL` y `ADMIN_PASSWORD` (mínimo 12 caracteres) en tu `.env` local y ejecuta `npm run db:admin`. No guardes el `.env` en Git ni configures esas credenciales de bootstrap como variables públicas del frontend.
 5. Prueba el inicio de sesión, una reserva y el historial en el dominio publicado. Añade el dominio personalizado en Vercel y en `WEB_ORIGIN` si corresponde; cambia las variables en Vercel y redepliega para aplicarlas.
 

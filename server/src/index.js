@@ -89,6 +89,69 @@ const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (character
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
 })[character]);
 
+const base64Lines = (value) => Buffer.from(value, 'utf8').toString('base64').match(/.{1,76}/g).join('\r\n');
+
+async function sendWithGmailApi({ to, subject, html, text }) {
+  const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: process.env.GMAIL_CLIENT_ID,
+      client_secret: process.env.GMAIL_CLIENT_SECRET,
+      refresh_token: process.env.GMAIL_REFRESH_TOKEN,
+      grant_type: 'refresh_token',
+    }),
+    signal: AbortSignal.timeout(10000),
+  });
+  const tokenData = await tokenResponse.json().catch(() => ({}));
+  if (!tokenResponse.ok || typeof tokenData.access_token !== 'string') {
+    console.error('No se pudo renovar el acceso de Gmail:', { status: tokenResponse.status, error: tokenData.error });
+    return { sent: false, reason: 'No se pudo autorizar Gmail. Revisa las credenciales OAuth y el permiso gmail.send en Vercel.' };
+  }
+
+  const boundary = `mesalista_${randomBytes(18).toString('hex')}`;
+  const encodedSubject = `=?UTF-8?B?${Buffer.from(subject, 'utf8').toString('base64')}?=`;
+  const mimeMessage = [
+    `From: MesaLista <${process.env.GMAIL_USER}>`,
+    `To: ${to}`,
+    `Subject: ${encodedSubject}`,
+    'MIME-Version: 1.0',
+    `Content-Type: multipart/alternative; boundary="${boundary}"`,
+    '',
+    `--${boundary}`,
+    'Content-Type: text/plain; charset="UTF-8"',
+    'Content-Transfer-Encoding: base64',
+    '',
+    base64Lines(text),
+    `--${boundary}`,
+    'Content-Type: text/html; charset="UTF-8"',
+    'Content-Transfer-Encoding: base64',
+    '',
+    base64Lines(html),
+    `--${boundary}--`,
+    '',
+  ].join('\r\n');
+  const raw = Buffer.from(mimeMessage, 'utf8').toString('base64url');
+  const sendResponse = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${tokenData.access_token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ raw }),
+    signal: AbortSignal.timeout(10000),
+  });
+  const sendData = await sendResponse.json().catch(() => ({}));
+  if (!sendResponse.ok) {
+    console.error('Gmail API rechazó el correo:', {
+      status: sendResponse.status,
+      error: sendData.error?.status || sendData.error?.message,
+    });
+    return { sent: false, reason: 'Gmail no aceptó el envío. Verifica el permiso gmail.send y las credenciales OAuth.' };
+  }
+  return { sent: true };
+}
+
 async function sendReservationEmail(reservationId, type = 'receipt') {
   if (!['reservation', 'receipt'].includes(type)) {
     throw new Error(`Tipo de correo no válido: ${type}`);
@@ -112,8 +175,22 @@ async function sendReservationEmail(reservationId, type = 'receipt') {
   if (!reservation.customer_email) {
     return { sent: false, reason: 'La reserva no tiene un correo de destinatario.' };
   }
-  if (!process.env.RESEND_API_KEY || !process.env.RECEIPT_FROM) {
-    return { sent: false, reason: 'Falta configurar RESEND_API_KEY y RECEIPT_FROM en Vercel.' };
+  const gmailSettings = [
+    process.env.GMAIL_CLIENT_ID,
+    process.env.GMAIL_CLIENT_SECRET,
+    process.env.GMAIL_REFRESH_TOKEN,
+    process.env.GMAIL_USER,
+  ];
+  const gmailConfigured = gmailSettings.every(Boolean);
+  const resendConfigured = Boolean(process.env.RESEND_API_KEY && process.env.RECEIPT_FROM);
+  if (gmailConfigured && !validEmail(process.env.GMAIL_USER)) {
+    return { sent: false, reason: 'GMAIL_USER debe ser la dirección Gmail autorizada para Gmail API.' };
+  }
+  if (!gmailConfigured && !resendConfigured) {
+    return {
+      sent: false,
+      reason: 'Configura GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN y GMAIL_USER en Vercel, o la configuración alternativa de Resend.',
+    };
   }
 
   const currency = process.env.PAYMENT_CURRENCY || 'USD';
@@ -173,25 +250,39 @@ async function sendReservationEmail(reservationId, type = 'receipt') {
   const html = `<!doctype html><html lang="es"><body style="margin:0;background:#f4f7f6;padding:28px;font-family:Arial,sans-serif;color:#263538"><main style="max-width:560px;margin:auto;background:#fff;border:1px solid #e4ebea;border-radius:14px;overflow:hidden"><header style="padding:22px 26px;background:#263538;color:#fff;font-weight:bold;letter-spacing:1px">MESA<span style="color:#a9dd70">LISTA</span><span style="float:right;font-size:12px;letter-spacing:0">COMPROBANTE</span></header><section style="padding:26px"><p style="margin:0;color:#328e7c;font-size:11px;font-weight:bold;letter-spacing:1px">${mailHeading}</p><h1 style="margin:8px 0 20px;font-size:24px">${mailTitle}</h1><p style="margin:0 0 18px;color:#657474">Hola ${safe.name}, ${isReceipt ? 'tu pago quedó registrado.' : 'registramos tu reserva.'} Aquí están los datos.</p><div style="padding:14px;background:#f4f7f6;border-radius:8px;line-height:1.8"><strong>Folio:</strong> ${safe.folio}<br><strong>Cuenta:</strong> ${safe.name} · ${safe.email}<br><strong>Fecha del evento:</strong> ${safe.eventDate}<br><strong>Horario:</strong> ${safe.schedule}<br><strong>Mesas:</strong> ${safe.tables} · <strong>Sillas:</strong> ${safe.chairs}<br><strong>Total:</strong> ${safe.total}${statusLine}<br><strong>Método:</strong> ${safe.method}</div><p style="margin:20px 0 0;color:#7c8989;font-size:11px;line-height:1.6">${footnote}</p></section></main></body></html>`;
 
   try {
-    const response = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        from: process.env.RECEIPT_FROM,
-        to: [reservation.customer_email],
+    let emailResult;
+    if (gmailConfigured) {
+      emailResult = await sendWithGmailApi({
+        to: reservation.customer_email,
         subject: `${mailTitle} MesaLista ${folio}`,
         html,
         text,
-      }),
-      signal: AbortSignal.timeout(10000),
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      console.error('No se pudo enviar el correo:', { reservationId, status: response.status, error: data.message || data.name });
-      return { sent: false, reason: 'Resend rechazó el envío. Verifica la clave y el dominio remitente en Resend.' };
+      });
+    } else {
+      const response = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from: process.env.RECEIPT_FROM,
+          to: [reservation.customer_email],
+          subject: `${mailTitle} MesaLista ${folio}`,
+          html,
+          text,
+        }),
+        signal: AbortSignal.timeout(10000),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        console.error('No se pudo enviar el correo:', { reservationId, status: response.status, error: data.message || data.name });
+        return { sent: false, reason: 'Resend rechazó el envío. Verifica la clave y el dominio remitente en Resend.' };
+      }
+      emailResult = { sent: true };
+    }
+    if (!emailResult.sent) {
+      return emailResult;
     }
     const updated = await pool.query(
       `UPDATE reservations SET ${sentAtColumn} = NOW()
