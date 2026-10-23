@@ -556,7 +556,10 @@ function App() {
     { id: 'inicio', label: 'Resumen', icon: '⌂' },
     { id: 'reservas', label: 'Reservas', icon: '▦' },
     { id: 'prestamos', label: 'Préstamos', icon: '↗' },
-    ...(isAdmin ? [{ id: 'personal', label: 'Personal y salarios', icon: '♙' }] : []),
+    ...(isAdmin ? [
+      { id: 'trabajadores', label: 'Trabajadores', icon: '♙' },
+      { id: 'salarios', label: 'Salarios', icon: '$' },
+    ] : []),
     ...(isAdmin ? [{ id: 'historial', label: 'Historial', icon: '◷' }] : []),
   ];
   const invoiceReservation = reservations.find((reservation) => reservation.id === invoiceId);
@@ -583,7 +586,8 @@ function App() {
           {page === 'inicio' && <Dashboard dashboard={dashboard} isAdmin={isAdmin} reservations={reservations} loans={loans} onGo={setPage} onRun={run} token={session.token} />}
           {page === 'reservas' && <Reservations dashboard={dashboard} reservations={reservations} users={users} currentUser={session.user} busy={busy} onRun={run} token={session.token} isAdmin={isAdmin} onDemoPayment={setDemoReservation} onShowInvoice={setInvoiceId} onReceiptEmail={showReceiptEmailResult} onEmailReservation={emailReservation} />}
           {page === 'prestamos' && <Loans loans={loans} users={users} reservations={reservations} isAdmin={isAdmin} busy={busy} onRun={run} token={session.token} />}
-          {page === 'personal' && isAdmin && <Employees employees={employees} busy={busy} onRun={run} token={session.token} />}
+          {page === 'trabajadores' && isAdmin && <Employees employees={employees} busy={busy} onRun={run} token={session.token} />}
+          {page === 'salarios' && isAdmin && <Salaries employees={employees} busy={busy} onRun={run} token={session.token} />}
           {page === 'historial' && isAdmin && <History movements={movements} users={users} onRun={run} token={session.token} onRefresh={refreshAdmin} />}
           <footer className="footer">MesaLista <span>·</span> Inventario claro, eventos tranquilos</footer>
         </div>
@@ -998,29 +1002,20 @@ function Loans({ loans, users, reservations, isAdmin, busy, onRun, token }) {
 }
 
 function Employees({ employees, busy, onRun, token }) {
-  const emptyForm = {
-    name: '',
-    position: '',
-    weeklySalary: '',
-    regularHoursPerDay: '8',
-    overtimeMultiplier: '1.5',
-  };
+  const emptyForm = { name: '', position: '' };
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState(null);
-  const [editingActive, setEditingActive] = useState(true);
-  const [overtimeHours, setOvertimeHours] = useState({});
   const activeEmployees = employees.filter((employee) => employee.active);
   const saveEmployee = async (event) => {
     event.preventDefault();
-    const weeklySalary = Number(form.weeklySalary);
-    if (!Number.isFinite(weeklySalary) || weeklySalary < 0) return;
+    const existingEmployee = employees.find((employee) => employee.id === editingId);
     const payload = {
       name: form.name.trim(),
       position: form.position.trim(),
-      weeklySalaryCents: Math.round(weeklySalary * 100),
-      regularHoursPerDay: Number(form.regularHoursPerDay),
-      overtimeMultiplier: Number(form.overtimeMultiplier),
-      ...(editingId ? { active: editingActive } : {}),
+      weeklySalaryCents: Number(existingEmployee?.weekly_salary_cents) || 0,
+      regularHoursPerDay: Number(existingEmployee?.regular_hours_per_day) || 8,
+      overtimeMultiplier: Number(existingEmployee?.overtime_multiplier) || 1.5,
+      ...(editingId ? { active: existingEmployee?.active ?? true } : {}),
     };
     const path = editingId ? `/employees/${editingId}` : '/employees';
     const result = await onRun(
@@ -1033,18 +1028,13 @@ function Employees({ employees, busy, onRun, token }) {
     if (result && result !== true) {
       setForm(emptyForm);
       setEditingId(null);
-      setEditingActive(true);
     }
   };
   const startEditing = (employee) => {
     setEditingId(employee.id);
-    setEditingActive(employee.active);
     setForm({
       name: employee.name,
       position: employee.position,
-      weeklySalary: (Number(employee.weekly_salary_cents) / 100).toFixed(2),
-      regularHoursPerDay: String(Number(employee.regular_hours_per_day)),
-      overtimeMultiplier: String(Number(employee.overtime_multiplier)),
     });
   };
   const setActive = (employee, active) => onRun(
@@ -1061,43 +1051,32 @@ function Employees({ employees, busy, onRun, token }) {
     }),
     active ? 'Trabajador reactivado.' : 'Trabajador archivado.',
   );
-  const overtimePay = (employee) => {
-    const regularWeeklyHours = Number(employee.regular_hours_per_day) * 5;
-    const regularHourlyCents = Number(employee.weekly_salary_cents) / regularWeeklyHours;
-    const hours = Math.max(0, Number(overtimeHours[employee.id]) || 0);
-    return Math.round(regularHourlyCents * Number(employee.overtime_multiplier) * hours);
-  };
 
   return <>
     <PageHeading
       eyebrow="ADMINISTRACIÓN"
-      title="Trabajadores y salarios"
-      description="Registra tu personal y consulta una estimación semanal para cinco días, con horas extra opcionales."
+      title="Trabajadores"
+      description="Agrega y administra las personas que forman parte de tu equipo."
     />
     <form className="panel employee-form" onSubmit={saveEmployee}>
-      <div className="panel-heading"><div><h2>{editingId ? 'Editar trabajador' : 'Agregar trabajador'}</h2><p>El salario base representa cinco días de trabajo.</p></div><span className="step-pill">ADMIN</span></div>
+      <div className="panel-heading"><div><h2>{editingId ? 'Editar trabajador' : 'Agregar trabajador'}</h2><p>Los datos de salario se configuran aparte, en la pestaña Salarios.</p></div><span className="step-pill">ADMIN</span></div>
       <div className="employee-fields">
         <label>Nombre completo<input required maxLength="120" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label>
         <label>Puesto o función <span className="optional">opcional</span><input maxLength="120" value={form.position} onChange={(event) => setForm({ ...form, position: event.target.value })} /></label>
-        <label>Salario por 5 días (US$)<input required type="number" min="0" max="10000000" step="0.01" value={form.weeklySalary} onChange={(event) => setForm({ ...form, weeklySalary: event.target.value })} /></label>
-        <label>Horas normales por día<input required type="number" min="0.25" max="24" step="0.25" value={form.regularHoursPerDay} onChange={(event) => setForm({ ...form, regularHoursPerDay: event.target.value })} /></label>
-        <label>Multiplicador de hora extra<input required type="number" min="1" max="5" step="0.05" value={form.overtimeMultiplier} onChange={(event) => setForm({ ...form, overtimeMultiplier: event.target.value })} /></label>
       </div>
       <div className="employee-form-actions">
         <button className="button primary" disabled={busy || !form.name.trim()}>{editingId ? 'Guardar cambios' : 'Agregar trabajador'} <span>→</span></button>
-        {editingId && <button className="text-button" type="button" onClick={() => { setEditingId(null); setEditingActive(true); setForm(emptyForm); }}>Cancelar edición</button>}
+        {editingId && <button className="text-button" type="button" onClick={() => { setEditingId(null); setForm(emptyForm); }}>Cancelar edición</button>}
       </div>
     </form>
 
     <section className="panel list-panel">
-      <div className="panel-heading"><div><h2>Trabajadores</h2><p>Administra los nombres, puestos y salarios semanales.</p></div><span className="count-pill">{activeEmployees.length} activos</span></div>
+      <div className="panel-heading"><div><h2>Lista de trabajadores</h2><p>Administra nombres, puestos y estado del personal.</p></div><span className="count-pill">{activeEmployees.length} activos</span></div>
       {employees.length ? <div className="table-wrap"><table>
-        <thead><tr><th>Nombre</th><th>Puesto</th><th>Salario por 5 días</th><th>Horas normales/día</th><th>Estado</th><th>Acciones</th></tr></thead>
+        <thead><tr><th>Nombre</th><th>Puesto</th><th>Estado</th><th>Acciones</th></tr></thead>
         <tbody>{employees.map((employee) => <tr key={employee.id}>
           <td><strong>{employee.name}</strong></td>
           <td>{employee.position || '—'}</td>
-          <td>{money(employee.weekly_salary_cents, 'USD')}</td>
-          <td>{Number(employee.regular_hours_per_day)} h</td>
           <td><span className={`employee-state ${employee.active ? 'active' : 'archived'}`}>{employee.active ? 'Activo' : 'Archivado'}</span></td>
           <td><div className="employee-row-actions">
             <button className="table-action" type="button" onClick={() => startEditing(employee)}>Editar</button>
@@ -1106,30 +1085,94 @@ function Employees({ employees, busy, onRun, token }) {
         </tr>)}</tbody>
       </table></div> : <EmptyState text="Todavía no hay trabajadores. Agrégalos en el formulario de arriba." />}
     </section>
+  </>;
+}
 
+function Salaries({ employees, busy, onRun, token }) {
+  const activeEmployees = employees.filter((employee) => employee.active);
+  const [salaryDrafts, setSalaryDrafts] = useState({});
+  useEffect(() => {
+    setSalaryDrafts((current) => Object.fromEntries(activeEmployees.map((employee) => [
+      employee.id,
+      {
+        weeklySalary: (Number(employee.weekly_salary_cents) / 100).toFixed(2),
+        regularHoursPerDay: String(Number(employee.regular_hours_per_day)),
+        overtimeMultiplier: String(Number(employee.overtime_multiplier)),
+        overtimeHours: current[employee.id]?.overtimeHours || '0',
+      },
+    ])));
+  }, [employees]);
+  const updateDraft = (employeeId, field, value) => {
+    setSalaryDrafts((current) => ({
+      ...current,
+      [employeeId]: { ...current[employeeId], [field]: value },
+    }));
+  };
+  const saveSalary = (employee) => {
+    const draft = salaryDrafts[employee.id];
+    const weeklySalary = Number(draft?.weeklySalary);
+    const regularHoursPerDay = Number(draft?.regularHoursPerDay);
+    const overtimeMultiplier = Number(draft?.overtimeMultiplier);
+    if (!Number.isFinite(weeklySalary) || weeklySalary < 0
+      || !Number.isFinite(regularHoursPerDay) || regularHoursPerDay <= 0 || regularHoursPerDay > 24
+      || !Number.isFinite(overtimeMultiplier) || overtimeMultiplier < 1 || overtimeMultiplier > 5) {
+      return;
+    }
+    return onRun(
+      () => api(`/employees/${employee.id}`, token, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          name: employee.name,
+          position: employee.position,
+          weeklySalaryCents: Math.round(weeklySalary * 100),
+          regularHoursPerDay,
+          overtimeMultiplier,
+          active: employee.active,
+        }),
+      }),
+      `Salario de ${employee.name} actualizado.`,
+    );
+  };
+  const salaryEstimate = (employee, draft) => {
+    const weeklySalaryCents = Math.round((Number(draft?.weeklySalary) || 0) * 100);
+    const regularWeeklyHours = Number(draft?.regularHoursPerDay) * 5;
+    const regularHourlyCents = regularWeeklyHours > 0 ? weeklySalaryCents / regularWeeklyHours : 0;
+    const overtimeHours = Math.min(80, Math.max(0, Number(draft?.overtimeHours) || 0));
+    const overtimePayCents = Math.round(regularHourlyCents * Number(draft?.overtimeMultiplier) * overtimeHours);
+    return { weeklySalaryCents, overtimePayCents, totalCents: weeklySalaryCents + overtimePayCents };
+  };
+
+  return <>
+    <PageHeading
+      eyebrow="ADMINISTRACIÓN"
+      title="Salarios"
+      description="Configura el pago de cinco días y calcula aparte cuánto correspondería por horas extra."
+    />
     <section className="panel list-panel">
-      <div className="panel-heading"><div><h2>Estimación de salario semanal</h2><p>La tarifa extra usa salario semanal ÷ (5 × horas normales al día) × multiplicador.</p></div><span className="count-pill">USD · 5 días</span></div>
+      <div className="panel-heading"><div><h2>Configuración y estimación salarial</h2><p>Guarda el salario semanal, las horas normales y el multiplicador de cada trabajador.</p></div><span className="count-pill">USD · 5 días</span></div>
       {activeEmployees.length ? <div className="table-wrap"><table>
-        <thead><tr><th>Trabajador</th><th>Base semanal</th><th>Horas extra</th><th>Multiplicador</th><th>Pago de horas extra</th><th>Total estimado</th></tr></thead>
+        <thead><tr><th>Trabajador</th><th>Salario base semanal</th><th>Horas normales/día</th><th>Multiplicador extra</th><th>Horas extra a calcular</th><th>Pago extra estimado</th><th>Total estimado</th><th>Acción</th></tr></thead>
         <tbody>{activeEmployees.map((employee) => {
-          const extraPay = overtimePay(employee);
+          const draft = salaryDrafts[employee.id] || {
+            weeklySalary: (Number(employee.weekly_salary_cents) / 100).toFixed(2),
+            regularHoursPerDay: String(Number(employee.regular_hours_per_day)),
+            overtimeMultiplier: String(Number(employee.overtime_multiplier)),
+            overtimeHours: '0',
+          };
+          const estimate = salaryEstimate(employee, draft);
           return <tr key={employee.id}>
             <td><strong>{employee.name}</strong><small className="cell-sub">{employee.position || 'Trabajador'}</small></td>
-            <td>{money(employee.weekly_salary_cents, 'USD')}</td>
-            <td><label className="overtime-input"><input aria-label={`Horas extra de ${employee.name}`} type="number" min="0" max="80" step="0.25" value={overtimeHours[employee.id] ?? 0} onChange={(event) => {
-              const entered = Number(event.target.value);
-              setOvertimeHours({
-                ...overtimeHours,
-                [employee.id]: event.target.value === '' ? '' : String(Math.min(80, Math.max(0, Number.isFinite(entered) ? entered : 0))),
-              });
-            }} /> h</label></td>
-            <td>{Number(employee.overtime_multiplier)}×</td>
-            <td>{money(extraPay, 'USD')}</td>
-            <td><strong>{money(Number(employee.weekly_salary_cents) + extraPay, 'USD')}</strong></td>
+            <td><label className="salary-input"><span>US$</span><input aria-label={`Salario semanal de ${employee.name}`} type="number" min="0" max="10000000" step="0.01" value={draft.weeklySalary} onChange={(event) => updateDraft(employee.id, 'weeklySalary', event.target.value)} /></label></td>
+            <td><label className="salary-input"><input aria-label={`Horas normales diarias de ${employee.name}`} type="number" min="0.25" max="24" step="0.25" value={draft.regularHoursPerDay} onChange={(event) => updateDraft(employee.id, 'regularHoursPerDay', event.target.value)} /><span>h</span></label></td>
+            <td><label className="salary-input"><input aria-label={`Multiplicador de hora extra de ${employee.name}`} type="number" min="1" max="5" step="0.05" value={draft.overtimeMultiplier} onChange={(event) => updateDraft(employee.id, 'overtimeMultiplier', event.target.value)} /><span>×</span></label></td>
+            <td><label className="salary-input"><input aria-label={`Horas extra a calcular para ${employee.name}`} type="number" min="0" max="80" step="0.25" value={draft.overtimeHours} onChange={(event) => updateDraft(employee.id, 'overtimeHours', event.target.value)} /><span>h</span></label></td>
+            <td>{money(estimate.overtimePayCents, 'USD')}</td>
+            <td><strong>{money(estimate.totalCents, 'USD')}</strong></td>
+            <td><button className="table-action" type="button" disabled={busy} onClick={() => saveSalary(employee)}>Guardar salario</button></td>
           </tr>;
         })}</tbody>
-      </table></div> : <EmptyState text="Agrega un trabajador activo para calcular el salario semanal." />}
-      <p className="employee-disclaimer">Estimación informativa, no registra pagos ni sustituye el cálculo de nómina o las reglas laborales aplicables. Las horas extra se ingresan solo para esta consulta y no se guardan como asistencia.</p>
+      </table></div> : <EmptyState text="Agrega y activa trabajadores en la pestaña Trabajadores para configurar sus salarios." />}
+      <p className="employee-disclaimer">Cálculo: salario semanal ÷ (5 × horas normales al día) × multiplicador × horas extra. La estimación no registra pagos ni asistencia y no sustituye la nómina o las reglas laborales aplicables.</p>
     </section>
   </>;
 }
