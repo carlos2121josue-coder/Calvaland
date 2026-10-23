@@ -1002,16 +1002,34 @@ function Loans({ loans, users, reservations, isAdmin, busy, onRun, token }) {
 }
 
 function Employees({ employees, busy, onRun, token }) {
+  const jobTitles = [
+    'Atención al cliente',
+    'Ventas y reservas',
+    'Administración',
+    'Encargado/a de bodega',
+    'Preparación de pedidos',
+    'Entrega y transporte',
+    'Instalación y montaje',
+    'Mantenimiento',
+    'Limpieza',
+    'Seguridad',
+    'Contabilidad',
+    'Otro',
+  ];
   const emptyForm = { name: '', position: '' };
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState(null);
+  const [customPosition, setCustomPosition] = useState('');
+  const isCustomPosition = form.position !== '' && !jobTitles.includes(form.position);
+  const selectedPosition = isCustomPosition ? 'Otro' : form.position;
   const activeEmployees = employees.filter((employee) => employee.active);
   const saveEmployee = async (event) => {
     event.preventDefault();
     const existingEmployee = employees.find((employee) => employee.id === editingId);
+    const position = selectedPosition === 'Otro' ? customPosition.trim() : selectedPosition;
     const payload = {
       name: form.name.trim(),
-      position: form.position.trim(),
+      position,
       weeklySalaryCents: Number(existingEmployee?.weekly_salary_cents) || 0,
       regularHoursPerDay: Number(existingEmployee?.regular_hours_per_day) || 8,
       overtimeMultiplier: Number(existingEmployee?.overtime_multiplier) || 1.5,
@@ -1028,6 +1046,7 @@ function Employees({ employees, busy, onRun, token }) {
     if (result && result !== true) {
       setForm(emptyForm);
       setEditingId(null);
+      setCustomPosition('');
     }
   };
   const startEditing = (employee) => {
@@ -1036,6 +1055,7 @@ function Employees({ employees, busy, onRun, token }) {
       name: employee.name,
       position: employee.position,
     });
+    setCustomPosition(employee.position && !jobTitles.includes(employee.position) ? employee.position : '');
   };
   const setActive = (employee, active) => onRun(
     () => api(`/employees/${employee.id}`, token, {
@@ -1062,11 +1082,18 @@ function Employees({ employees, busy, onRun, token }) {
       <div className="panel-heading"><div><h2>{editingId ? 'Editar trabajador' : 'Agregar trabajador'}</h2><p>Los datos de salario se configuran aparte, en la pestaña Salarios.</p></div><span className="step-pill">ADMIN</span></div>
       <div className="employee-fields">
         <label>Nombre completo<input required maxLength="120" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label>
-        <label>Puesto o función <span className="optional">opcional</span><input maxLength="120" value={form.position} onChange={(event) => setForm({ ...form, position: event.target.value })} /></label>
+        <label>Puesto o función<select value={selectedPosition} onChange={(event) => {
+          setForm({ ...form, position: event.target.value === 'Otro' ? 'Otro' : event.target.value });
+          if (event.target.value !== 'Otro') setCustomPosition('');
+        }}>
+          <option value="">Selecciona un puesto</option>
+          {jobTitles.map((title) => <option key={title} value={title}>{title}</option>)}
+        </select></label>
+        {selectedPosition === 'Otro' && <label>Especifica el puesto<input required maxLength="120" value={customPosition} onChange={(event) => setCustomPosition(event.target.value)} placeholder="Escribe el puesto" /></label>}
       </div>
       <div className="employee-form-actions">
-        <button className="button primary" disabled={busy || !form.name.trim()}>{editingId ? 'Guardar cambios' : 'Agregar trabajador'} <span>→</span></button>
-        {editingId && <button className="text-button" type="button" onClick={() => { setEditingId(null); setForm(emptyForm); }}>Cancelar edición</button>}
+        <button className="button primary" disabled={busy || !form.name.trim() || selectedPosition === 'Otro' && !customPosition.trim()}>{editingId ? 'Guardar cambios' : 'Agregar trabajador'} <span>→</span></button>
+        {editingId && <button className="text-button" type="button" onClick={() => { setEditingId(null); setForm(emptyForm); setCustomPosition(''); }}>Cancelar edición</button>}
       </div>
     </form>
 
