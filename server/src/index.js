@@ -1094,6 +1094,71 @@ app.get('/api/users', requireAdmin, async (_req, res) => {
   res.json({ users: result.rows });
 });
 
+app.get('/api/employees', requireAdmin, async (_req, res) => {
+  const result = await pool.query(
+    `SELECT id, name, position, weekly_salary_cents, regular_hours_per_day,
+            overtime_multiplier, active, created_at, updated_at
+     FROM employees
+     ORDER BY active DESC, name`,
+  );
+  res.json({ employees: result.rows });
+});
+
+app.post('/api/employees', requireAdmin, async (req, res) => {
+  const {
+    name = '',
+    position = '',
+    weeklySalaryCents,
+    regularHoursPerDay = 8,
+    overtimeMultiplier = 1.5,
+  } = req.body ?? {};
+  if (typeof name !== 'string' || !name.trim() || name.trim().length > 120
+    || typeof position !== 'string' || position.trim().length > 120
+    || !Number.isSafeInteger(weeklySalaryCents) || weeklySalaryCents < 0
+    || !Number.isFinite(regularHoursPerDay) || regularHoursPerDay <= 0 || regularHoursPerDay > 24
+    || !Number.isFinite(overtimeMultiplier) || overtimeMultiplier < 1 || overtimeMultiplier > 5) {
+    fail(400, 'Revisa el nombre, puesto, salario semanal, horas ordinarias y multiplicador de horas extra.');
+  }
+  const created = await pool.query(
+    `INSERT INTO employees (name, position, weekly_salary_cents, regular_hours_per_day, overtime_multiplier)
+     VALUES ($1, $2, $3, $4, $5)
+     RETURNING id, name, position, weekly_salary_cents, regular_hours_per_day,
+               overtime_multiplier, active, created_at, updated_at`,
+    [name.trim(), position.trim(), weeklySalaryCents, regularHoursPerDay, overtimeMultiplier],
+  );
+  res.status(201).json({ employee: created.rows[0] });
+});
+
+app.patch('/api/employees/:id', requireAdmin, async (req, res) => {
+  const {
+    name = '',
+    position = '',
+    weeklySalaryCents,
+    regularHoursPerDay = 8,
+    overtimeMultiplier = 1.5,
+    active = true,
+  } = req.body ?? {};
+  if (typeof name !== 'string' || !name.trim() || name.trim().length > 120
+    || typeof position !== 'string' || position.trim().length > 120
+    || !Number.isSafeInteger(weeklySalaryCents) || weeklySalaryCents < 0
+    || !Number.isFinite(regularHoursPerDay) || regularHoursPerDay <= 0 || regularHoursPerDay > 24
+    || !Number.isFinite(overtimeMultiplier) || overtimeMultiplier < 1 || overtimeMultiplier > 5
+    || typeof active !== 'boolean') {
+    fail(400, 'Revisa el nombre, puesto, salario semanal, horas ordinarias, multiplicador y estado del trabajador.');
+  }
+  const updated = await pool.query(
+    `UPDATE employees
+     SET name = $1, position = $2, weekly_salary_cents = $3, regular_hours_per_day = $4,
+         overtime_multiplier = $5, active = $6, updated_at = NOW()
+     WHERE id = $7
+     RETURNING id, name, position, weekly_salary_cents, regular_hours_per_day,
+               overtime_multiplier, active, created_at, updated_at`,
+    [name.trim(), position.trim(), weeklySalaryCents, regularHoursPerDay, overtimeMultiplier, active, req.params.id],
+  );
+  if (!updated.rows[0]) fail(404, 'No se encontró el trabajador.');
+  res.json({ employee: updated.rows[0] });
+});
+
 app.patch('/api/users/:id/role', requireAdmin, async (req, res) => {
   const { role } = req.body ?? {};
   if (!['admin', 'user'].includes(role)) fail(400, 'El rol debe ser admin o user.');

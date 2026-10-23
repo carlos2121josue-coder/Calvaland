@@ -9,6 +9,20 @@ CREATE TABLE IF NOT EXISTS users (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS employees (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  position TEXT NOT NULL DEFAULT '',
+  weekly_salary_cents INTEGER NOT NULL CHECK (weekly_salary_cents >= 0),
+  regular_hours_per_day NUMERIC(4, 2) NOT NULL DEFAULT 8
+    CHECK (regular_hours_per_day > 0 AND regular_hours_per_day <= 24),
+  overtime_multiplier NUMERIC(4, 2) NOT NULL DEFAULT 1.5
+    CHECK (overtime_multiplier >= 1 AND overtime_multiplier <= 5),
+  active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS inventory (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   resource TEXT NOT NULL UNIQUE CHECK (resource IN ('tables', 'chairs')),
@@ -129,6 +143,7 @@ CREATE TABLE IF NOT EXISTS movements (
 ALTER TABLE movements ADD COLUMN IF NOT EXISTS actor_email TEXT;
 
 CREATE INDEX IF NOT EXISTS reservations_user_created_idx ON reservations(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS employees_active_name_idx ON employees(active, name);
 CREATE UNIQUE INDEX IF NOT EXISTS payment_attempts_one_pending_idx
   ON payment_attempts(reservation_id) WHERE status = 'pending';
 CREATE INDEX IF NOT EXISTS loans_user_due_idx ON loans(user_id, due_date);

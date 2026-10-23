@@ -329,6 +329,7 @@ function App() {
   const [loans, setLoans] = useState([]);
   const [movements, setMovements] = useState([]);
   const [users, setUsers] = useState([]);
+  const [employees, setEmployees] = useState([]);
   const [demoReservation, setDemoReservation] = useState(null);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
@@ -357,12 +358,14 @@ function App() {
 
   const refreshAdmin = useCallback(async () => {
     if (!session?.token || session.user?.role !== 'admin') return;
-    const [history, userData] = await Promise.all([
+    const [history, userData, employeeData] = await Promise.all([
       api('/movements', session.token),
       api('/users', session.token),
+      api('/employees', session.token),
     ]);
     setMovements(history.movements);
     setUsers(userData.users);
+    setEmployees(employeeData.employees);
   }, [session]);
 
   useEffect(() => {
@@ -397,6 +400,7 @@ function App() {
       setLoans([]);
       setMovements([]);
       setUsers([]);
+      setEmployees([]);
       setDemoReservation(null);
       setInvoiceId(null);
       setSessionExpired(true);
@@ -434,12 +438,14 @@ function App() {
   const login = (value) => {
     localStorage.setItem('mesalista-session', JSON.stringify(value));
     setSessionExpired(false);
+    setEmployees([]);
     setSession(value);
   };
   const logout = () => {
     localStorage.removeItem('mesalista-session');
     setSession(null);
     setDashboard(null);
+    setEmployees([]);
     setInvoiceId(null);
   };
   const dismissInvoice = (reservationId) => {
@@ -550,6 +556,7 @@ function App() {
     { id: 'inicio', label: 'Resumen', icon: '⌂' },
     { id: 'reservas', label: 'Reservas', icon: '▦' },
     { id: 'prestamos', label: 'Préstamos', icon: '↗' },
+    ...(isAdmin ? [{ id: 'personal', label: 'Personal y salarios', icon: '♙' }] : []),
     ...(isAdmin ? [{ id: 'historial', label: 'Historial', icon: '◷' }] : []),
   ];
   const invoiceReservation = reservations.find((reservation) => reservation.id === invoiceId);
@@ -576,6 +583,7 @@ function App() {
           {page === 'inicio' && <Dashboard dashboard={dashboard} isAdmin={isAdmin} reservations={reservations} loans={loans} onGo={setPage} onRun={run} token={session.token} />}
           {page === 'reservas' && <Reservations dashboard={dashboard} reservations={reservations} users={users} currentUser={session.user} busy={busy} onRun={run} token={session.token} isAdmin={isAdmin} onDemoPayment={setDemoReservation} onShowInvoice={setInvoiceId} onReceiptEmail={showReceiptEmailResult} onEmailReservation={emailReservation} />}
           {page === 'prestamos' && <Loans loans={loans} users={users} reservations={reservations} isAdmin={isAdmin} busy={busy} onRun={run} token={session.token} />}
+          {page === 'personal' && isAdmin && <Employees employees={employees} busy={busy} onRun={run} token={session.token} />}
           {page === 'historial' && isAdmin && <History movements={movements} users={users} onRun={run} token={session.token} onRefresh={refreshAdmin} />}
           <footer className="footer">MesaLista <span>·</span> Inventario claro, eventos tranquilos</footer>
         </div>
@@ -986,6 +994,143 @@ function Loans({ loans, users, reservations, isAdmin, busy, onRun, token }) {
       <button className="button primary" disabled={busy || !form.responsible || !form.tables && !form.chairs}>Registrar préstamo <span>→</span></button>
     </form>}
     <section className="panel list-panel"><div className="panel-heading"><div><h2>{isAdmin ? 'Todos los préstamos' : 'Tus préstamos'}</h2><p>El inventario se actualiza con cada devolución</p></div><span className="count-pill">{loans.length} registros</span></div>{loans.length ? <div className="table-wrap"><table><thead><tr><th>Responsable</th><th>Préstamo original</th><th>Devuelto</th><th>Devolución prevista</th><th>Pendiente</th><th>Estado</th>{isAdmin && <th>Registrar devolución</th>}</tr></thead><tbody>{loans.map((loan) => { const data = returns[loan.id] || { tables: 0, chairs: 0 }; return <tr key={loan.id}><td><strong>{loan.borrower_name}</strong><small className="cell-sub">{loan.user_email}</small></td><td>{loan.tables} mesas · {loan.chairs} sillas</td><td>{loan.tables_returned} mesas · {loan.chairs_returned} sillas</td><td>{dateLabel(loan.due_date)}</td><td>{loan.tables_pending} mesas · {loan.chairs_pending} sillas</td><td><Status status={loan.effective_status} /></td>{isAdmin && <td>{loan.effective_status !== 'returned' ? <div className="return-controls"><input aria-label="Mesas devueltas" type="number" min="0" max={loan.tables_pending} value={data.tables} onChange={(e) => setReturns({ ...returns, [loan.id]: { ...data, tables: Number(e.target.value) } })} /><input aria-label="Sillas devueltas" type="number" min="0" max={loan.chairs_pending} value={data.chairs} onChange={(e) => setReturns({ ...returns, [loan.id]: { ...data, chairs: Number(e.target.value) } })} /><button className="table-action" disabled={busy || !data.tables && !data.chairs} onClick={() => onRun(async () => { await api(`/loans/${loan.id}/returns`, token, { method: 'POST', body: JSON.stringify(data) }); setReturns((current) => ({ ...current, [loan.id]: { tables: 0, chairs: 0 } })); }, 'Devolución registrada. El inventario disponible ya fue actualizado.')}>Recibir</button></div> : 'Completo'}</td>}</tr>; })}</tbody></table></div> : <EmptyState text="No hay préstamos registrados por ahora." />}</section>
+  </>;
+}
+
+function Employees({ employees, busy, onRun, token }) {
+  const emptyForm = {
+    name: '',
+    position: '',
+    weeklySalary: '',
+    regularHoursPerDay: '8',
+    overtimeMultiplier: '1.5',
+  };
+  const [form, setForm] = useState(emptyForm);
+  const [editingId, setEditingId] = useState(null);
+  const [editingActive, setEditingActive] = useState(true);
+  const [overtimeHours, setOvertimeHours] = useState({});
+  const activeEmployees = employees.filter((employee) => employee.active);
+  const saveEmployee = async (event) => {
+    event.preventDefault();
+    const weeklySalary = Number(form.weeklySalary);
+    if (!Number.isFinite(weeklySalary) || weeklySalary < 0) return;
+    const payload = {
+      name: form.name.trim(),
+      position: form.position.trim(),
+      weeklySalaryCents: Math.round(weeklySalary * 100),
+      regularHoursPerDay: Number(form.regularHoursPerDay),
+      overtimeMultiplier: Number(form.overtimeMultiplier),
+      ...(editingId ? { active: editingActive } : {}),
+    };
+    const path = editingId ? `/employees/${editingId}` : '/employees';
+    const result = await onRun(
+      () => api(path, token, {
+        method: editingId ? 'PATCH' : 'POST',
+        body: JSON.stringify(payload),
+      }),
+      editingId ? 'Trabajador actualizado.' : 'Trabajador agregado.',
+    );
+    if (result && result !== true) {
+      setForm(emptyForm);
+      setEditingId(null);
+      setEditingActive(true);
+    }
+  };
+  const startEditing = (employee) => {
+    setEditingId(employee.id);
+    setEditingActive(employee.active);
+    setForm({
+      name: employee.name,
+      position: employee.position,
+      weeklySalary: (Number(employee.weekly_salary_cents) / 100).toFixed(2),
+      regularHoursPerDay: String(Number(employee.regular_hours_per_day)),
+      overtimeMultiplier: String(Number(employee.overtime_multiplier)),
+    });
+  };
+  const setActive = (employee, active) => onRun(
+    () => api(`/employees/${employee.id}`, token, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        name: employee.name,
+        position: employee.position,
+        weeklySalaryCents: Number(employee.weekly_salary_cents),
+        regularHoursPerDay: Number(employee.regular_hours_per_day),
+        overtimeMultiplier: Number(employee.overtime_multiplier),
+        active,
+      }),
+    }),
+    active ? 'Trabajador reactivado.' : 'Trabajador archivado.',
+  );
+  const overtimePay = (employee) => {
+    const regularWeeklyHours = Number(employee.regular_hours_per_day) * 5;
+    const regularHourlyCents = Number(employee.weekly_salary_cents) / regularWeeklyHours;
+    const hours = Math.max(0, Number(overtimeHours[employee.id]) || 0);
+    return Math.round(regularHourlyCents * Number(employee.overtime_multiplier) * hours);
+  };
+
+  return <>
+    <PageHeading
+      eyebrow="ADMINISTRACIÓN"
+      title="Trabajadores y salarios"
+      description="Registra tu personal y consulta una estimación semanal para cinco días, con horas extra opcionales."
+    />
+    <form className="panel employee-form" onSubmit={saveEmployee}>
+      <div className="panel-heading"><div><h2>{editingId ? 'Editar trabajador' : 'Agregar trabajador'}</h2><p>El salario base representa cinco días de trabajo.</p></div><span className="step-pill">ADMIN</span></div>
+      <div className="employee-fields">
+        <label>Nombre completo<input required maxLength="120" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label>
+        <label>Puesto o función <span className="optional">opcional</span><input maxLength="120" value={form.position} onChange={(event) => setForm({ ...form, position: event.target.value })} /></label>
+        <label>Salario por 5 días (US$)<input required type="number" min="0" max="10000000" step="0.01" value={form.weeklySalary} onChange={(event) => setForm({ ...form, weeklySalary: event.target.value })} /></label>
+        <label>Horas normales por día<input required type="number" min="0.25" max="24" step="0.25" value={form.regularHoursPerDay} onChange={(event) => setForm({ ...form, regularHoursPerDay: event.target.value })} /></label>
+        <label>Multiplicador de hora extra<input required type="number" min="1" max="5" step="0.05" value={form.overtimeMultiplier} onChange={(event) => setForm({ ...form, overtimeMultiplier: event.target.value })} /></label>
+      </div>
+      <div className="employee-form-actions">
+        <button className="button primary" disabled={busy || !form.name.trim()}>{editingId ? 'Guardar cambios' : 'Agregar trabajador'} <span>→</span></button>
+        {editingId && <button className="text-button" type="button" onClick={() => { setEditingId(null); setEditingActive(true); setForm(emptyForm); }}>Cancelar edición</button>}
+      </div>
+    </form>
+
+    <section className="panel list-panel">
+      <div className="panel-heading"><div><h2>Trabajadores</h2><p>Administra los nombres, puestos y salarios semanales.</p></div><span className="count-pill">{activeEmployees.length} activos</span></div>
+      {employees.length ? <div className="table-wrap"><table>
+        <thead><tr><th>Nombre</th><th>Puesto</th><th>Salario por 5 días</th><th>Horas normales/día</th><th>Estado</th><th>Acciones</th></tr></thead>
+        <tbody>{employees.map((employee) => <tr key={employee.id}>
+          <td><strong>{employee.name}</strong></td>
+          <td>{employee.position || '—'}</td>
+          <td>{money(employee.weekly_salary_cents, 'USD')}</td>
+          <td>{Number(employee.regular_hours_per_day)} h</td>
+          <td><span className={`employee-state ${employee.active ? 'active' : 'archived'}`}>{employee.active ? 'Activo' : 'Archivado'}</span></td>
+          <td><div className="employee-row-actions">
+            <button className="table-action" type="button" onClick={() => startEditing(employee)}>Editar</button>
+            <button className="table-action" type="button" onClick={() => setActive(employee, !employee.active)}>{employee.active ? 'Archivar' : 'Reactivar'}</button>
+          </div></td>
+        </tr>)}</tbody>
+      </table></div> : <EmptyState text="Todavía no hay trabajadores. Agrégalos en el formulario de arriba." />}
+    </section>
+
+    <section className="panel list-panel">
+      <div className="panel-heading"><div><h2>Estimación de salario semanal</h2><p>La tarifa extra usa salario semanal ÷ (5 × horas normales al día) × multiplicador.</p></div><span className="count-pill">USD · 5 días</span></div>
+      {activeEmployees.length ? <div className="table-wrap"><table>
+        <thead><tr><th>Trabajador</th><th>Base semanal</th><th>Horas extra</th><th>Multiplicador</th><th>Pago de horas extra</th><th>Total estimado</th></tr></thead>
+        <tbody>{activeEmployees.map((employee) => {
+          const extraPay = overtimePay(employee);
+          return <tr key={employee.id}>
+            <td><strong>{employee.name}</strong><small className="cell-sub">{employee.position || 'Trabajador'}</small></td>
+            <td>{money(employee.weekly_salary_cents, 'USD')}</td>
+            <td><label className="overtime-input"><input aria-label={`Horas extra de ${employee.name}`} type="number" min="0" max="80" step="0.25" value={overtimeHours[employee.id] ?? 0} onChange={(event) => {
+              const entered = Number(event.target.value);
+              setOvertimeHours({
+                ...overtimeHours,
+                [employee.id]: event.target.value === '' ? '' : String(Math.min(80, Math.max(0, Number.isFinite(entered) ? entered : 0))),
+              });
+            }} /> h</label></td>
+            <td>{Number(employee.overtime_multiplier)}×</td>
+            <td>{money(extraPay, 'USD')}</td>
+            <td><strong>{money(Number(employee.weekly_salary_cents) + extraPay, 'USD')}</strong></td>
+          </tr>;
+        })}</tbody>
+      </table></div> : <EmptyState text="Agrega un trabajador activo para calcular el salario semanal." />}
+      <p className="employee-disclaimer">Estimación informativa, no registra pagos ni sustituye el cálculo de nómina o las reglas laborales aplicables. Las horas extra se ingresan solo para esta consulta y no se guardan como asistencia.</p>
+    </section>
   </>;
 }
 
