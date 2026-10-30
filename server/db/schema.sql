@@ -18,10 +18,30 @@ CREATE TABLE IF NOT EXISTS employees (
     CHECK (regular_hours_per_day > 0 AND regular_hours_per_day <= 24),
   overtime_multiplier NUMERIC(4, 2) NOT NULL DEFAULT 1.5
     CHECK (overtime_multiplier >= 1 AND overtime_multiplier <= 5),
+  days_worked INTEGER NOT NULL DEFAULT 0 CHECK (days_worked >= 0 AND days_worked <= 7),
+  overtime_hours NUMERIC(5, 2) NOT NULL DEFAULT 0
+    CHECK (overtime_hours >= 0 AND overtime_hours <= 80),
+  is_demo BOOLEAN NOT NULL DEFAULT FALSE,
   active BOOLEAN NOT NULL DEFAULT TRUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE employees ADD COLUMN IF NOT EXISTS days_worked INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE employees ADD COLUMN IF NOT EXISTS overtime_hours NUMERIC(5, 2) NOT NULL DEFAULT 0;
+ALTER TABLE employees ADD COLUMN IF NOT EXISTS is_demo BOOLEAN NOT NULL DEFAULT FALSE;
+
+ALTER TABLE employees DROP CONSTRAINT IF EXISTS employees_days_worked_check;
+ALTER TABLE employees ADD CONSTRAINT employees_days_worked_check CHECK (days_worked >= 0 AND days_worked <= 7);
+ALTER TABLE employees DROP CONSTRAINT IF EXISTS employees_overtime_hours_check;
+ALTER TABLE employees ADD CONSTRAINT employees_overtime_hours_check CHECK (overtime_hours >= 0 AND overtime_hours <= 80);
+
+INSERT INTO employees (
+  name, position, weekly_salary_cents, regular_hours_per_day,
+  overtime_multiplier, days_worked, overtime_hours, is_demo, active
+)
+SELECT 'Trabajador de prueba', 'Preparación de pedidos', 40000, 8, 1.50, 5, 6, TRUE, TRUE
+WHERE NOT EXISTS (SELECT 1 FROM employees WHERE is_demo = TRUE);
 
 CREATE TABLE IF NOT EXISTS inventory (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -560,6 +560,7 @@ function App() {
       { id: 'trabajadores', label: 'Trabajadores', icon: '♙' },
       { id: 'salarios', label: 'Salarios', icon: '$' },
     ] : []),
+    { id: 'derechos', label: 'Derechos de los trabajadores', icon: '⚖' },
     ...(isAdmin ? [{ id: 'historial', label: 'Historial', icon: '◷' }] : []),
   ];
   const invoiceReservation = reservations.find((reservation) => reservation.id === invoiceId);
@@ -588,6 +589,7 @@ function App() {
           {page === 'prestamos' && <Loans loans={loans} users={users} reservations={reservations} isAdmin={isAdmin} busy={busy} onRun={run} token={session.token} />}
           {page === 'trabajadores' && isAdmin && <Employees employees={employees} busy={busy} onRun={run} token={session.token} />}
           {page === 'salarios' && isAdmin && <Salaries employees={employees} busy={busy} onRun={run} token={session.token} />}
+          {page === 'derechos' && <WorkerRights />}
           {page === 'historial' && isAdmin && <History movements={movements} users={users} onRun={run} token={session.token} onRefresh={refreshAdmin} />}
           <footer className="footer">MesaLista <span>·</span> Inventario claro, eventos tranquilos</footer>
         </div>
@@ -658,6 +660,29 @@ function Dashboard({ dashboard, isAdmin, reservations, loans, onGo, onRun, token
 
 function sessionName() {
   try { return JSON.parse(localStorage.getItem('mesalista-session'))?.user?.name?.split(' ')[0] || 'bienvenido'; } catch { return 'bienvenido'; }
+}
+
+function WorkerRights() {
+  const rights = [
+    ['Trabajo digno', 'Recibir un trato respetuoso, seguro y libre de acoso o discriminación en el lugar de trabajo.'],
+    ['Contrato y pago claro', 'Conocer las condiciones del puesto, el calendario de pago y el salario acordado antes de comenzar.'],
+    ['Jornada y descanso', 'Contar con horarios definidos, descansos adecuados y límites razonables para jornadas extraordinarias.'],
+    ['Horas extra', 'Recibir el pago o compensación correspondiente por las horas extra cuando la ley aplicable lo establezca.'],
+    ['Seguridad laboral', 'Trabajar en condiciones seguras, con herramientas apropiadas y capacitación para prevenir accidentes.'],
+    ['Días y licencias', 'Disfrutar de días de descanso, vacaciones y permisos conforme a la legislación y a las políticas de la empresa.'],
+    ['Igualdad de oportunidades', 'Acceder de manera justa a empleo, ascensos, capacitación y beneficios sin discriminación.'],
+    ['Expresión y consulta', 'Comunicar inquietudes, reportar irregularidades y ser escuchado sin represalias.'],
+  ];
+  return <>
+    <PageHeading eyebrow="PERSONAL" title="Derechos de los trabajadores" description="Información general para conocer y promover un entorno laboral justo, seguro y respetuoso." />
+    <div className="rights-notice"><span>ⓘ</span><p><strong>Información orientativa.</strong> Los derechos específicos pueden variar según el país, la legislación vigente y el contrato de cada trabajador.</p></div>
+    <section className="rights-grid">
+      {rights.map(([title, description], index) => <article className="rights-card" key={title}>
+        <span className="rights-number">{String(index + 1).padStart(2, '0')}</span>
+        <div><h2>{title}</h2><p>{description}</p></div>
+      </article>)}
+    </section>
+  </>;
 }
 
 function ResourceCard({ title, item, icon, tone, isAdmin, onRun, token }) {
@@ -1033,6 +1058,9 @@ function Employees({ employees, busy, onRun, token }) {
       weeklySalaryCents: Number(existingEmployee?.weekly_salary_cents) || 0,
       regularHoursPerDay: Number(existingEmployee?.regular_hours_per_day) || 8,
       overtimeMultiplier: Number(existingEmployee?.overtime_multiplier) || 1.5,
+      daysWorked: Number(existingEmployee?.days_worked) || 0,
+      overtimeHours: Number(existingEmployee?.overtime_hours) || 0,
+      isDemo: existingEmployee?.is_demo || false,
       ...(editingId ? { active: existingEmployee?.active ?? true } : {}),
     };
     const path = editingId ? `/employees/${editingId}` : '/employees';
@@ -1066,10 +1094,13 @@ function Employees({ employees, busy, onRun, token }) {
         weeklySalaryCents: Number(employee.weekly_salary_cents),
         regularHoursPerDay: Number(employee.regular_hours_per_day),
         overtimeMultiplier: Number(employee.overtime_multiplier),
+        daysWorked: Number(employee.days_worked),
+        overtimeHours: Number(employee.overtime_hours),
+        isDemo: employee.is_demo || false,
         active,
       }),
     }),
-    active ? 'Trabajador reactivado.' : 'Trabajador archivado.',
+    active ? 'Trabajador reactivado.' : 'Trabajador despedido.',
   );
 
   return <>
@@ -1102,12 +1133,15 @@ function Employees({ employees, busy, onRun, token }) {
       {employees.length ? <div className="table-wrap"><table>
         <thead><tr><th>Nombre</th><th>Puesto</th><th>Estado</th><th>Acciones</th></tr></thead>
         <tbody>{employees.map((employee) => <tr key={employee.id}>
-          <td><strong>{employee.name}</strong></td>
+          <td><strong>{employee.name}</strong>{employee.is_demo && <small className="demo-employee-tag">CUENTA DE DEMOSTRACIÓN · 5 DÍAS · {employee.overtime_hours} h extra</small>}</td>
           <td>{employee.position || '—'}</td>
-          <td><span className={`employee-state ${employee.active ? 'active' : 'archived'}`}>{employee.active ? 'Activo' : 'Archivado'}</span></td>
+          <td><span className={`employee-state ${employee.active ? 'active' : 'archived'}`}>{employee.active ? 'Activo' : 'Despedido'}</span></td>
           <td><div className="employee-row-actions">
             <button className="table-action" type="button" onClick={() => startEditing(employee)}>Editar</button>
-            <button className="table-action" type="button" onClick={() => setActive(employee, !employee.active)}>{employee.active ? 'Archivar' : 'Reactivar'}</button>
+            <button className="table-action" type="button" onClick={() => {
+              if (employee.active && !window.confirm(`¿Despedir a ${employee.name}? El registro se conservará en el historial.`)) return;
+              setActive(employee, !employee.active);
+            }}>{employee.active ? 'Despedir' : 'Reactivar'}</button>
           </div></td>
         </tr>)}</tbody>
       </table></div> : <EmptyState text="Todavía no hay trabajadores. Agrégalos en el formulario de arriba." />}
@@ -1125,7 +1159,7 @@ function Salaries({ employees, busy, onRun, token }) {
         weeklySalary: (Number(employee.weekly_salary_cents) / 100).toFixed(2),
         regularHoursPerDay: String(Number(employee.regular_hours_per_day)),
         overtimeMultiplier: String(Number(employee.overtime_multiplier)),
-        overtimeHours: current[employee.id]?.overtimeHours || '0',
+        overtimeHours: current[employee.id]?.overtimeHours ?? String(Number(employee.overtime_hours) || 0),
       },
     ])));
   }, [employees]);
@@ -1155,6 +1189,9 @@ function Salaries({ employees, busy, onRun, token }) {
           regularHoursPerDay,
           overtimeMultiplier,
           active: employee.active,
+          daysWorked: Number(employee.days_worked) || 0,
+          overtimeHours: Math.min(80, Math.max(0, Number(draft?.overtimeHours) || 0)),
+          isDemo: employee.is_demo || false,
         }),
       }),
       `Salario de ${employee.name} actualizado.`,
@@ -1188,7 +1225,7 @@ function Salaries({ employees, busy, onRun, token }) {
           };
           const estimate = salaryEstimate(employee, draft);
           return <tr key={employee.id}>
-            <td><strong>{employee.name}</strong><small className="cell-sub">{employee.position || 'Trabajador'}</small></td>
+            <td><strong>{employee.name}</strong><small className="cell-sub">{employee.position || 'Trabajador'}</small>{employee.is_demo && <small className="demo-employee-tag">DEMO · 5/5 jornadas</small>}</td>
             <td><label className="salary-input"><span>US$</span><input aria-label={`Salario semanal de ${employee.name}`} type="number" min="0" max="10000000" step="0.01" value={draft.weeklySalary} onChange={(event) => updateDraft(employee.id, 'weeklySalary', event.target.value)} /></label></td>
             <td><label className="salary-input"><input aria-label={`Horas normales diarias de ${employee.name}`} type="number" min="0.25" max="24" step="0.25" value={draft.regularHoursPerDay} onChange={(event) => updateDraft(employee.id, 'regularHoursPerDay', event.target.value)} /><span>h</span></label></td>
             <td><label className="salary-input"><input aria-label={`Multiplicador de hora extra de ${employee.name}`} type="number" min="1" max="5" step="0.05" value={draft.overtimeMultiplier} onChange={(event) => updateDraft(employee.id, 'overtimeMultiplier', event.target.value)} /><span>×</span></label></td>
