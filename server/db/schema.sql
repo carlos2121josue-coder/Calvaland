@@ -40,8 +40,12 @@ INSERT INTO employees (
   name, position, weekly_salary_cents, regular_hours_per_day,
   overtime_multiplier, days_worked, overtime_hours, is_demo, active
 )
-SELECT 'Trabajador de prueba', 'Preparación de pedidos', 40000, 8, 1.50, 5, 6, TRUE, TRUE
+SELECT 'Trabajador de prueba', 'Preparación de pedidos', 20000, 8, 1.50, 5, 6, TRUE, TRUE
 WHERE NOT EXISTS (SELECT 1 FROM employees WHERE is_demo = TRUE);
+
+UPDATE employees
+SET weekly_salary_cents = 20000, days_worked = 5, overtime_hours = 6
+WHERE is_demo = TRUE;
 
 CREATE TABLE IF NOT EXISTS inventory (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -1202,7 +1202,7 @@ function Salaries({ employees, busy, onRun, token }) {
     const regularWeeklyHours = Number(draft?.regularHoursPerDay) * 5;
     const regularHourlyCents = regularWeeklyHours > 0 ? weeklySalaryCents / regularWeeklyHours : 0;
     const overtimeHours = Math.min(80, Math.max(0, Number(draft?.overtimeHours) || 0));
-    const overtimePayCents = Math.round(regularHourlyCents * Number(draft?.overtimeMultiplier) * overtimeHours);
+    const overtimePayCents = employee.is_demo ? 5000 : Math.round(regularHourlyCents * Number(draft?.overtimeMultiplier) * overtimeHours);
     return { weeklySalaryCents, overtimePayCents, totalCents: weeklySalaryCents + overtimePayCents };
   };
 
@@ -1213,9 +1213,9 @@ function Salaries({ employees, busy, onRun, token }) {
       description="Configura el pago de cinco días y calcula aparte cuánto correspondería por horas extra."
     />
     <section className="panel list-panel">
-      <div className="panel-heading"><div><h2>Configuración y estimación salarial</h2><p>Guarda el salario semanal, las horas normales y el multiplicador de cada trabajador.</p></div><span className="count-pill">USD · 5 días</span></div>
+      <div className="panel-heading"><div><h2>Configuración y estimación salarial</h2><p>Guarda el salario, las horas normales y el multiplicador de cada trabajador.</p></div><span className="count-pill">USD · 5 días</span></div>
       {activeEmployees.length ? <div className="table-wrap"><table>
-        <thead><tr><th>Trabajador</th><th>Salario base semanal</th><th>Horas normales/día</th><th>Multiplicador extra</th><th>Horas extra a calcular</th><th>Pago extra estimado</th><th>Total estimado</th><th>Acción</th></tr></thead>
+        <thead><tr><th>Trabajador</th><th>Salario base</th><th>Horas normales/día</th><th>Multiplicador extra</th><th>Horas extra a calcular</th><th>Pago extra estimado</th><th>Total estimado</th><th>Acción</th></tr></thead>
         <tbody>{activeEmployees.map((employee) => {
           const draft = salaryDrafts[employee.id] || {
             weeklySalary: (Number(employee.weekly_salary_cents) / 100).toFixed(2),
@@ -1226,10 +1226,10 @@ function Salaries({ employees, busy, onRun, token }) {
           const estimate = salaryEstimate(employee, draft);
           return <tr key={employee.id}>
             <td><strong>{employee.name}</strong><small className="cell-sub">{employee.position || 'Trabajador'}</small>{employee.is_demo && <small className="demo-employee-tag">DEMO · 5/5 jornadas</small>}</td>
-            <td><label className="salary-input"><span>US$</span><input aria-label={`Salario semanal de ${employee.name}`} type="number" min="0" max="10000000" step="0.01" value={draft.weeklySalary} onChange={(event) => updateDraft(employee.id, 'weeklySalary', event.target.value)} /></label></td>
+            <td><label className="salary-input"><span>US$</span><input aria-label={`${employee.is_demo ? 'Salario mensual de ejemplo de' : 'Salario semanal de'} ${employee.name}`} type="number" min="0" max="10000000" step="0.01" value={draft.weeklySalary} onChange={(event) => updateDraft(employee.id, 'weeklySalary', event.target.value)} /></label>{employee.is_demo && <small className="cell-sub">salario mensual de ejemplo</small>}</td>
             <td><label className="salary-input"><input aria-label={`Horas normales diarias de ${employee.name}`} type="number" min="0.25" max="24" step="0.25" value={draft.regularHoursPerDay} onChange={(event) => updateDraft(employee.id, 'regularHoursPerDay', event.target.value)} /><span>h</span></label></td>
             <td><label className="salary-input"><input aria-label={`Multiplicador de hora extra de ${employee.name}`} type="number" min="1" max="5" step="0.05" value={draft.overtimeMultiplier} onChange={(event) => updateDraft(employee.id, 'overtimeMultiplier', event.target.value)} /><span>×</span></label></td>
-            <td><label className="salary-input"><input aria-label={`Horas extra a calcular para ${employee.name}`} type="number" min="0" max="80" step="0.25" value={draft.overtimeHours} onChange={(event) => updateDraft(employee.id, 'overtimeHours', event.target.value)} /><span>h</span></label></td>
+            <td><label className="salary-input"><input aria-label={`Horas extra a calcular para ${employee.name}`} type="number" min="0" max="80" step="0.25" value={draft.overtimeHours} disabled={employee.is_demo} onChange={(event) => updateDraft(employee.id, 'overtimeHours', event.target.value)} /><span>h</span></label>{employee.is_demo && <small className="cell-sub">ejemplo fijo: US$50</small>}</td>
             <td>{money(estimate.overtimePayCents, 'USD')}</td>
             <td><strong>{money(estimate.totalCents, 'USD')}</strong></td>
             <td><button className="table-action" type="button" disabled={busy} onClick={() => saveSalary(employee)}>Guardar salario</button></td>
